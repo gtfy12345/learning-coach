@@ -35,3 +35,12 @@ data/private/
 .idea/
 .vscode/
 *.swp
+
+# Local AI agent harness (do not commit)
+.agent-skills/
+.agent/
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md
+GEMINI.md

@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流：
+项目已经跑通第一条教学工作流，并完成第二阶段的模型层扩展：
 
 ```mermaid
 flowchart LR
@@ -22,8 +22,14 @@ flowchart LR
 
 这条流程包含：
 
+- 可在浏览器完成完整学习闭环的本地 Web MVP
 - LangChain 模型统一接口与 Messages
-- Pydantic Structured Output
+- 主模型与评价模型可使用不同 Provider
+- API Key 与官方 CLI 登录两种认证通道
+- 基于模型 profile 的图片、Tool Calling 和 Structured Output 能力协商
+- Pydantic 结构化诊断与结构化评价
+- Provider 原生 JSON Schema 与 Tool Strategy 回退
+- 本地图片和图片 URL 的跨 Provider 标准 content blocks
 - LangGraph State、Node、Edge 和 Conditional Edge
 - 可终止的补救循环
 - `interrupt()` 人工输入
@@ -31,7 +37,7 @@ flowchart LR
 
 ## 快速开始
 
-克隆仓库并创建独立环境：
+克隆仓库并使用 Python 3.10 或更高版本创建独立环境：
 
 ```bash
 git clone https://github.com/gtfy12345/learning-coach.git
@@ -47,11 +53,21 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env`，至少填写模型和密钥：
+如果使用 API Key 模式，编辑 `.env`，至少填写主模型和对应密钥：
 
 ```dotenv
-MODEL_ID=openai:gpt-5-mini
+CHAT_MODEL_ID=openai:gpt-5-mini
 OPENAI_API_KEY=你的密钥
+```
+
+如果希望使用已经登录的官方 CLI，不需要在 `.env` 中填写对应 API Key。先登录，再把模型 ID 切到 CLI Provider：
+
+```bash
+PYTHONPATH=src python -m learning_coach auth login codex
+```
+
+```dotenv
+CHAT_MODEL_ID=codex_cli:default
 ```
 
 然后启动学习教练：
@@ -66,7 +82,144 @@ PYTHONPATH=src python -m learning_coach "LangGraph Reducer"
 PYTHONPATH=src python -m learning_coach
 ```
 
-如果使用符合 OpenAI Chat Completions 规范的服务，可以在 `.env` 中增加 `OPENAI_BASE_URL` 并填写服务提供的模型名。原生多 Provider、模型能力判断和认证适配会在后续文章中单独实现。
+### 启动 Web MVP
+
+Web 页面与 CLI 共用同一套 LangGraph、模型配置和认证方式。已经登录 Codex CLI 时，可以直接启动：
+
+```bash
+PYTHONPATH=src python -m learning_coach web --model codex_cli:default
+```
+
+然后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。如果已经在 `.env` 中配置模型，可以省略 `--model`：
+
+```bash
+PYTHONPATH=src python -m learning_coach web
+```
+
+页面已经接通以下功能：
+
+- 输入学习主题并生成结构化诊断题
+- 上传一张本地图片参与诊断
+- 提交诊断回答，查看针对性讲解和迁移练习
+- 提交练习答案，查看结构化评分、反馈和知识缺口
+- 未达到 80 分时自动补讲并继续出题，最多评价两次
+- 完成后展示最终得分与学习小结
+- 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
+
+当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
+
+后端接口：
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/health` | 服务健康检查 |
+| `GET /api/config` | 返回脱敏后的模型配置和图片能力 |
+| `POST /api/sessions` | 使用主题和可选图片创建学习会话 |
+| `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
+
+如果要让评价使用另一个模型或 Provider：
+
+```dotenv
+CHAT_MODEL_ID=openai:gpt-5-mini
+ASSESSMENT_MODEL_ID=anthropic:claude-sonnet-4-6
+OPENAI_API_KEY=你的 OpenAI API Key
+ANTHROPIC_API_KEY=你的 Anthropic API Key
+```
+
+也可以把模型切换到 Google Gemini：
+
+```dotenv
+CHAT_MODEL_ID=google_genai:gemini-2.5-flash-lite
+GOOGLE_API_KEY=你的 Google API Key
+```
+
+LangChain 会根据 `provider:model` 前缀加载对应集成。项目安装了 OpenAI、Anthropic 和 Google GenAI 三个 Provider；其他 Provider 需要自行安装它的 LangChain 集成包。
+
+### 官方 CLI 登录模式
+
+CLI 登录模式调用官方命令完成登录和推理，不读取、解析或复制客户端保存的令牌。模型 ID 决定认证通道：`openai:`、`anthropic:` 和 `google_genai:` 继续使用 API Key；`codex_cli:`、`claude_code:` 和 `gemini_cli:` 使用对应 CLI 已保存的登录会话。
+
+| 模型 ID 前缀 | 官方程序 | 登录命令 | 结构化输出 |
+| --- | --- | --- | --- |
+| `codex_cli:` | Codex CLI | `python -m learning_coach auth login codex` | `codex exec --output-schema` |
+| `claude_code:` | Claude Code | `python -m learning_coach auth login claude` | `claude --json-schema` |
+| `gemini_cli:` | Gemini CLI | `python -m learning_coach auth login gemini` | JSON 提示词、Pydantic 校验和一次纠错重试 |
+
+示例配置：
+
+```dotenv
+# 使用 Codex 登录会话完成诊断、教学和出题
+CHAT_MODEL_ID=codex_cli:default
+
+# 使用 Claude 登录会话完成结构化评价
+ASSESSMENT_MODEL_ID=claude_code:sonnet
+
+# 单次 CLI 调用超时，单位为秒
+CLI_MODEL_TIMEOUT_SECONDS=300
+```
+
+也可以让两种角色都使用同一个登录会话：
+
+```dotenv
+CHAT_MODEL_ID=claude_code:sonnet
+# ASSESSMENT_MODEL_ID 未填写时自动复用主模型
+```
+
+Codex 与 Claude Code 支持非交互状态检查和退出：
+
+```bash
+PYTHONPATH=src python -m learning_coach auth status codex
+PYTHONPATH=src python -m learning_coach auth logout codex
+
+PYTHONPATH=src python -m learning_coach auth status claude
+PYTHONPATH=src python -m learning_coach auth logout claude
+```
+
+Gemini CLI 的 Google 登录由交互式 `/auth` 界面管理，目前没有不会产生模型请求的独立 `status` 命令，也没有独立的 `logout` 子命令。因此 Learning Coach 只负责启动官方界面，不会通过读取或删除 `~/.gemini` 文件来伪造状态或强制退出。
+
+CLI 模式的执行边界：
+
+- 子进程会移除对应 Provider 的 API Key 环境变量，保证确实使用 CLI 登录会话。
+- 每次调用使用临时工作目录，不加载本项目的 `AGENTS.md`、`CLAUDE.md` 或 `GEMINI.md`。
+- Codex 使用只读 sandbox、禁止审批并关闭会话持久化；Claude Code 使用 safe mode，并关闭会话持久化。
+- 没有图片时 Claude Code 禁用工具；发送本地图片时只开放 `Read`。
+- CLI 模式不主动下载图片 URL，只支持 `--image` 指向的本地图片；API Key 模式仍支持本地图片和图片 URL。
+- CLI 订阅额度、可选模型和服务可用性由对应官方客户端与账号决定，不等同于 Provider API 配额。
+
+### OpenAI-compatible 服务
+
+符合 OpenAI Chat Completions 规范的服务继续使用 `openai:` 前缀，并配置 endpoint：
+
+```dotenv
+CHAT_MODEL_ID=openai:你的模型名
+ASSESSMENT_MODEL_ID=openai:你的模型名
+OPENAI_BASE_URL=https://example.com/v1
+OPENAI_API_KEY=服务提供的密钥
+```
+
+兼容服务通常没有 LangChain model profile。它支持 Tool Calling 时，默认的 `auto` 会采用 Tool Strategy；如果服务明确支持原生 JSON Schema，可以设置：
+
+```dotenv
+STRUCTURED_OUTPUT_STRATEGY=native
+```
+
+可选值为 `auto`、`native` 和 `tool`。`auto` 优先使用模型 profile 声明的原生 Structured Output，否则回退到 function calling；`gemini_cli:` 会使用适配器明确声明的 `prompt_json` 路径，并通过 Pydantic 校验和一次纠错重试完成结构化输出。
+
+### 图片输入
+
+诊断阶段可以同时发送本地图片或图片 URL，`--image` 可以重复使用：
+
+```bash
+PYTHONPATH=src python -m learning_coach "解释这张状态图" \
+  --image ./state-graph.png \
+  --image https://example.com/second-diagram.png
+```
+
+本地图片会被编码成 base64 标准 content block，支持 PNG、JPEG、GIF 和 WebP，单张最大 10 MiB。`IMAGE_INPUT_POLICY=auto` 默认只允许 profile 明确声明视觉能力的模型；对确实支持图片但没有 profile 的兼容服务，可以显式设置 `IMAGE_INPUT_POLICY=allow`。
+
+### 认证边界
+
+项目支持两条明确分开的认证路径：API Provider 通过 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY` 等官方环境变量调用；CLI Provider 通过官方可执行程序使用它自己管理的登录会话。Learning Coach 不读取令牌文件，也不会把 Codex、Claude Code 或 Gemini CLI 的令牌取出后塞进 LangChain SDK。
 
 ## 运行测试
 
@@ -89,22 +242,42 @@ learning-coach/
 │   └── learning_coach/
 │       ├── __init__.py
 │       ├── __main__.py
+│       ├── auth.py
 │       ├── cli.py
+│       ├── cli_models.py
 │       ├── graph.py
+│       ├── media.py
 │       ├── model.py
 │       ├── nodes.py
 │       ├── schemas.py
-│       └── state.py
+│       ├── static/
+│       │   ├── app.js
+│       │   ├── index.html
+│       │   └── styles.css
+│       ├── state.py
+│       └── web.py
 └── tests/
+    ├── test_auth.py
+    ├── test_cli.py
+    ├── test_cli_models.py
     ├── test_graph.py
-    └── test_routing.py
+    ├── test_media.py
+    ├── test_model.py
+    ├── test_routing.py
+    └── test_web.py
 ```
 
-- `state.py`：学习过程保存哪些数据。
-- `schemas.py`：模型评价必须返回的结构。
+- `state.py`：学习过程、结构化诊断信息和图片 content blocks 保存哪些数据。
+- `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
 - `graph.py`：节点之间的固定边、条件边和循环。
+- `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
+- `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
+- `auth.py`：把登录、状态和退出操作委托给官方 CLI。
+- `cli_models.py`：把 Codex、Claude Code 和 Gemini CLI 适配成现有节点可调用的模型对象。
 - `cli.py`：接收人工回答，并用 `Command` 恢复图执行。
+- `web.py`：提供本地 FastAPI 页面、学习会话 API、图片上传和 Graph 恢复协议。
+- `static/`：浏览器端学习界面、进度状态和交互逻辑。
 
 ## 系列路线
 
@@ -114,6 +287,7 @@ learning-coach/
 | --- | --- | --- |
 | 1 | 从模型调用到学习闭环 | 诊断、讲解、练习、评价和补救 |
 | 2 | 多模型、多模态与结构化输出 | 主流 API、OpenAI-compatible 服务及登录适配 |
+| 2.5 | Web MVP | FastAPI、本地学习页面、图片上传和浏览器会话恢复 |
 | 3 | Runnable 与 LCEL | 资料预处理、批量抽取和并行分析 |
 | 4 | Context Engineering 与 Middleware | 动态组织教学上下文、工具和预算 |
 | 5 | 多模态学习资料摄取 | 读取文档、网页、图片与代码并保留来源 |
@@ -127,9 +301,14 @@ learning-coach/
 
 ## 当前边界
 
+- 图片目前只进入诊断节点，还没有文档解析、OCR、切分、索引或来源追踪。
 - 现在不会读取个人课程、论文或项目代码。
 - `InMemorySaver` 只保存当前进程中的状态。
+- Web MVP 目前只面向本机使用，没有用户账号、数据库、跨进程恢复或公网部署。
 - 评分由模型完成，不能直接等同于真实掌握程度。
+- model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
+- CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
+- CLI 登录模式只接受本地图片，不下载远程图片 URL。
 - 外层是确定性 Workflow；工具接入后，才会让 Agent 在局部范围内自主选择动作。
 
 ## 参与项目

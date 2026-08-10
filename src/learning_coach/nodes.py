@@ -2,7 +2,8 @@ from typing import Any, Literal
 
 from langgraph.types import interrupt
 
-from learning_coach.schemas import Assessment
+from learning_coach.model import LearningCoachModels
+from learning_coach.schemas import Assessment, Diagnostic
 from learning_coach.state import LearningState
 
 
@@ -30,21 +31,34 @@ def route_after_assessment(state: LearningState) -> Literal["retry", "finish"]:
 class LearningCoachNodes:
     """Nodes that perform one learning task and return partial state updates."""
 
-    def __init__(self, model: Any) -> None:
-        self.model = model
-        self.assessment_model = model.with_structured_output(Assessment)
+    def __init__(self, models: LearningCoachModels | Any) -> None:
+        self.models = (
+            models
+            if isinstance(models, LearningCoachModels)
+            else LearningCoachModels.from_models(models)
+        )
 
     def make_diagnostic(self, state: LearningState) -> dict[str, str]:
-        question = self.model.invoke(
+        prompt = f"主题：{state['topic']}。请用一道应用题判断学习者的基础。"
+        images = state.get("diagnostic_images", [])
+        user_content: str | list[dict[str, Any]] = prompt
+        if images:
+            user_content = [{"type": "text", "text": prompt}, *images]
+
+        result = self.models.diagnostic.invoke(
             [
                 ("system", "你是技术学习教练。只出一道诊断题，不要给答案。"),
-                (
-                    "user",
-                    f"主题：{state['topic']}。请用一道应用题判断学习者的基础。",
-                ),
+                {"role": "user", "content": user_content},
             ]
         )
-        return {"diagnostic_question": _message_text(question)}
+        diagnostic = (
+            result if isinstance(result, Diagnostic) else Diagnostic.model_validate(result)
+        )
+        return {
+            "diagnostic_question": diagnostic.question,
+            "diagnostic_focus": diagnostic.focus,
+            "diagnostic_difficulty": diagnostic.difficulty,
+        }
 
     def collect_diagnostic(self, state: LearningState) -> dict[str, Any]:
         answer = interrupt(
@@ -56,7 +70,7 @@ class LearningCoachNodes:
         return {"diagnostic_answer": str(answer), "attempts": 0}
 
     def teach(self, state: LearningState) -> dict[str, str]:
-        explanation = self.model.invoke(
+        explanation = self.models.chat.invoke(
             [
                 (
                     "system",
@@ -65,6 +79,8 @@ class LearningCoachNodes:
                 (
                     "user",
                     f"""主题：{state['topic']}
+诊断重点：{state.get('diagnostic_focus', '暂无')}
+诊断难度：{state.get('diagnostic_difficulty', '暂无')}
 诊断回答：{state.get('diagnostic_answer', '暂无')}
 上次反馈：{state.get('feedback', '暂无')}
 尚未掌握：{state.get('missing_point', '暂无')}
@@ -75,7 +91,7 @@ class LearningCoachNodes:
         return {"explanation": _message_text(explanation)}
 
     def make_quiz(self, state: LearningState) -> dict[str, str]:
-        question = self.model.invoke(
+        question = self.models.chat.invoke(
             [
                 ("system", "只出一道新的应用题，不要泄露答案。"),
                 (
@@ -96,7 +112,7 @@ class LearningCoachNodes:
         return {"quiz_answer": str(answer)}
 
     def assess(self, state: LearningState) -> dict[str, Any]:
-        result = self.assessment_model.invoke(
+        result = self.models.assessment.invoke(
             [
                 (
                     "system",
@@ -122,7 +138,7 @@ class LearningCoachNodes:
         }
 
     def summarize(self, state: LearningState) -> dict[str, str]:
-        summary = self.model.invoke(
+        summary = self.models.chat.invoke(
             [
                 (
                     "system",

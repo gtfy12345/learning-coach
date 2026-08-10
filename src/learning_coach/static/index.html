@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="会诊断、讲解、出题、评价并补救的本地 AI 学习教练"
+    />
+    <title>Learning Coach · AI 学习教练</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-one" aria-hidden="true"></div>
+    <div class="page-glow page-glow-two" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Learning Coach 首页">
+        <span class="brand-mark">LC</span>
+        <span>
+          <strong>Learning Coach</strong>
+          <small>AI 学习教练</small>
+        </span>
+      </a>
+      <div class="model-pill" id="model-pill" role="status">
+        <span class="status-dot"></span>
+        <span id="model-label">正在检查模型配置</span>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="workspace" aria-labelledby="page-title">
+        <div id="setup-view">
+          <div class="eyebrow"><span>02.5</span> WEB MVP</div>
+          <h1 id="page-title">别急着听答案，<br />先让我看看你卡在哪里。</h1>
+          <p class="hero-copy">
+            输入一个学习主题。教练会先诊断，再针对你的回答讲解、出题和评价；
+            没掌握的部分会自动补讲，直到形成一份诚实的学习小结。
+          </p>
+
+          <form id="start-form" class="start-card">
+            <label for="topic">今天想学什么？</label>
+            <div class="topic-row">
+              <input
+                id="topic"
+                name="topic"
+                type="text"
+                maxlength="500"
+                placeholder="例如：LangGraph 条件边、Python 生成器……"
+                autocomplete="off"
+                required
+              />
+              <button class="primary-button" type="submit">
+                <span>开始诊断</span><span aria-hidden="true">→</span>
+              </button>
+            </div>
+
+            <label class="upload-box" for="image">
+              <span class="upload-icon" aria-hidden="true">＋</span>
+              <span>
+                <strong id="upload-title">附一张题目或流程图</strong>
+                <small>PNG、JPEG、GIF、WebP · 最大 10 MiB</small>
+              </span>
+              <input
+                id="image"
+                name="image"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+              />
+            </label>
+            <p class="form-error" id="setup-error" role="alert"></p>
+          </form>
+
+          <div class="feature-strip" aria-label="学习流程">
+            <div><span>01</span><strong>定位</strong><small>先诊断真实基础</small></div>
+            <div><span>02</span><strong>讲透</strong><small>围绕薄弱点解释</small></div>
+            <div><span>03</span><strong>练会</strong><small>用新问题检验理解</small></div>
+            <div><span>04</span><strong>收束</strong><small>评分、补救与小结</small></div>
+          </div>
+        </div>
+
+        <div id="session-view" class="session-view" hidden>
+          <div class="session-heading">
+            <div>
+              <p class="eyebrow">LEARNING SESSION</p>
+              <h1 id="session-topic">学习主题</h1>
+            </div>
+            <button class="text-button" id="restart-button" type="button">
+              重新开始
+            </button>
+          </div>
+
+          <div class="timeline" id="timeline" aria-live="polite"></div>
+
+          <form id="answer-form" class="answer-card">
+            <label for="answer">你的回答</label>
+            <textarea
+              id="answer"
+              name="answer"
+              rows="4"
+              maxlength="20000"
+              placeholder="用自己的话回答。不确定也没关系，诊断比猜对更重要。"
+              required
+            ></textarea>
+            <div class="answer-actions">
+              <small>⌘/Ctrl + Enter 提交</small>
+              <button class="primary-button" type="submit">
+                <span>提交回答</span><span aria-hidden="true">→</span>
+              </button>
+            </div>
+            <p class="form-error" id="answer-error" role="alert"></p>
+          </form>
+
+          <section class="result-card" id="result-card" hidden>
+            <div class="score-orbit">
+              <strong id="result-score">—</strong><span>/ 100</span>
+            </div>
+            <div class="result-content">
+              <p class="eyebrow">SESSION COMPLETE</p>
+              <h2>这次学习，到这里真正闭环。</h2>
+              <dl>
+                <div><dt>评价</dt><dd id="result-feedback"></dd></div>
+                <div><dt>知识缺口</dt><dd id="result-missing"></dd></div>
+                <div><dt>学习小结</dt><dd id="result-summary"></dd></div>
+              </dl>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <aside class="coach-panel" aria-label="学习进度">
+        <div class="panel-intro">
+          <span class="coach-avatar">教</span>
+          <div><strong>学习路径</strong><small id="panel-status">等待开始</small></div>
+        </div>
+        <ol class="progress-list" id="progress-list">
+          <li data-step="diagnostic"><span>1</span><div><strong>诊断</strong><small>找到真实起点</small></div></li>
+          <li data-step="teach"><span>2</span><div><strong>讲解</strong><small>只补最关键的缺口</small></div></li>
+          <li data-step="quiz"><span>3</span><div><strong>练习</strong><small>换一道题验证迁移</small></div></li>
+          <li data-step="assessment"><span>4</span><div><strong>评价</strong><small>结构化评分与反馈</small></div></li>
+          <li data-step="summary"><span>5</span><div><strong>小结</strong><small>明确下一步练什么</small></div></li>
+        </ol>
+        <div class="panel-note">
+          <span aria-hidden="true">◎</span>
+          <p><strong>当前会话只保存在内存</strong><br />服务重启后需要重新开始。</p>
+        </div>
+      </aside>
+    </main>
+
+    <template id="message-template">
+      <article class="message">
+        <div class="message-meta"></div>
+        <div class="message-body"></div>
+      </article>
+    </template>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

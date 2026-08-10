@@ -1,18 +1,243 @@
 import os
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
+from learning_coach.cli_models import create_cli_chat_model, is_cli_model_id
+from learning_coach.schemas import Assessment, Diagnostic
 
-def create_chat_model() -> Any:
-    """Create the chat model configured by MODEL_ID in the local environment."""
+StructuredOutputStrategy = Literal["auto", "native", "tool"]
+StructuredOutputMethod = Literal["json_schema", "function_calling", "prompt_json"]
+ImageInputPolicy = Literal["auto", "allow", "deny"]
 
-    load_dotenv()
-    model_id = os.getenv("MODEL_ID", "").strip()
-    if not model_id:
-        raise RuntimeError(
-            "没有找到 MODEL_ID。请复制 .env.example 为 .env，并填写可用模型。"
+
+def _choice(value: str, *, name: str, allowed: tuple[str, ...]) -> str:
+    normalized = value.strip().lower()
+    if normalized not in allowed:
+        choices = ", ".join(allowed)
+        raise RuntimeError(f"{name} 必须是以下值之一：{choices}。")
+    return normalized
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+    """Environment-backed model choices for teaching and assessment roles."""
+
+    chat_model_id: str
+    assessment_model_id: str
+    structured_output_strategy: StructuredOutputStrategy = "auto"
+    image_input_policy: ImageInputPolicy = "auto"
+    cli_timeout_seconds: int = 300
+
+    @classmethod
+    def from_environ(cls, environ: Mapping[str, str]) -> "ModelSettings":
+        legacy_model_id = environ.get("MODEL_ID", "").strip()
+        chat_model_id = environ.get("CHAT_MODEL_ID", "").strip() or legacy_model_id
+        if not chat_model_id:
+            raise RuntimeError(
+                "没有找到 CHAT_MODEL_ID 或 MODEL_ID。"
+                "请复制 .env.example 为 .env，并填写可用模型。"
+            )
+
+        assessment_model_id = environ.get(
+            "ASSESSMENT_MODEL_ID", chat_model_id
+        ).strip()
+        if not assessment_model_id:
+            assessment_model_id = chat_model_id
+
+        strategy = _choice(
+            environ.get("STRUCTURED_OUTPUT_STRATEGY", "auto"),
+            name="STRUCTURED_OUTPUT_STRATEGY",
+            allowed=("auto", "native", "tool"),
+        )
+        image_policy = _choice(
+            environ.get("IMAGE_INPUT_POLICY", "auto"),
+            name="IMAGE_INPUT_POLICY",
+            allowed=("auto", "allow", "deny"),
+        )
+        timeout_value = environ.get("CLI_MODEL_TIMEOUT_SECONDS", "300").strip()
+        try:
+            cli_timeout_seconds = int(timeout_value)
+        except ValueError as exc:
+            raise RuntimeError("CLI_MODEL_TIMEOUT_SECONDS 必须是正整数。") from exc
+        if cli_timeout_seconds <= 0:
+            raise RuntimeError("CLI_MODEL_TIMEOUT_SECONDS 必须是正整数。")
+        return cls(
+            chat_model_id=chat_model_id,
+            assessment_model_id=assessment_model_id,
+            structured_output_strategy=cast(StructuredOutputStrategy, strategy),
+            image_input_policy=cast(ImageInputPolicy, image_policy),
+            cli_timeout_seconds=cli_timeout_seconds,
         )
 
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+@dataclass(frozen=True)
+class ModelCapabilities:
+    """Capabilities used by the app, projected from a LangChain model profile."""
+
+    native_structured_output: bool | None
+    tool_calling: bool | None
+    image_inputs: bool | None
+    prompt_structured_output: bool | None
+
+    @classmethod
+    def from_model(cls, model: Any) -> "ModelCapabilities":
+        profile = getattr(model, "profile", None)
+        if not isinstance(profile, Mapping):
+            profile = {}
+        return cls(
+            native_structured_output=_optional_bool(
+                profile.get("structured_output")
+            ),
+            tool_calling=_optional_bool(profile.get("tool_calling")),
+            image_inputs=_optional_bool(profile.get("image_inputs")),
+            prompt_structured_output=_optional_bool(
+                profile.get("learning_coach_prompt_structured_output")
+            ),
+        )
+
+
+def select_structured_output_method(
+    capabilities: ModelCapabilities,
+    strategy: StructuredOutputStrategy,
+) -> StructuredOutputMethod:
+    """Choose provider-native JSON Schema or the portable tool strategy."""
+
+    if strategy == "native":
+        if capabilities.native_structured_output is False:
+            raise RuntimeError("当前模型明确不支持原生 Structured Output。")
+        return "json_schema"
+
+    if strategy == "tool":
+        if capabilities.tool_calling is False:
+            raise RuntimeError("当前模型明确不支持 Tool Strategy。")
+        return "function_calling"
+
+    if capabilities.native_structured_output is True:
+        return "json_schema"
+    if capabilities.tool_calling is not False:
+        return "function_calling"
+    if capabilities.prompt_structured_output is True:
+        return "prompt_json"
+    raise RuntimeError(
+        "当前模型不支持原生 Structured Output、Tool Strategy 或受验证的 JSON 回退。"
+    )
+
+
+def image_inputs_enabled(
+    capabilities: ModelCapabilities,
+    policy: ImageInputPolicy,
+) -> bool:
+    """Gate image content using profile data unless the user explicitly overrides it."""
+
+    if policy == "allow":
+        return True
+    if policy == "deny":
+        return False
+    return capabilities.image_inputs is True
+
+
+def _with_structured_output(
+    model: Any,
+    schema: type[Any],
+    strategy: StructuredOutputStrategy,
+) -> tuple[Any, StructuredOutputMethod]:
+    method = select_structured_output_method(
+        ModelCapabilities.from_model(model), strategy
+    )
+    return model.with_structured_output(schema, method=method), method
+
+
+@dataclass(frozen=True)
+class LearningCoachModels:
+    """Models and negotiated capabilities used by the learning workflow."""
+
+    chat: Any
+    diagnostic: Any
+    assessment: Any
+    chat_capabilities: ModelCapabilities
+    diagnostic_method: StructuredOutputMethod
+    assessment_method: StructuredOutputMethod
+    accepts_images: bool
+
+    @classmethod
+    def from_models(
+        cls,
+        chat_model: Any,
+        assessment_model: Any | None = None,
+        *,
+        structured_output_strategy: StructuredOutputStrategy = "auto",
+        image_input_policy: ImageInputPolicy = "auto",
+    ) -> "LearningCoachModels":
+        assessment_base = (
+            assessment_model if assessment_model is not None else chat_model
+        )
+        diagnostic, diagnostic_method = _with_structured_output(
+            chat_model, Diagnostic, structured_output_strategy
+        )
+        assessment, assessment_method = _with_structured_output(
+            assessment_base, Assessment, structured_output_strategy
+        )
+        chat_capabilities = ModelCapabilities.from_model(chat_model)
+        return cls(
+            chat=chat_model,
+            diagnostic=diagnostic,
+            assessment=assessment,
+            chat_capabilities=chat_capabilities,
+            diagnostic_method=diagnostic_method,
+            assessment_method=assessment_method,
+            accepts_images=image_inputs_enabled(
+                chat_capabilities, image_input_policy
+            ),
+        )
+
+
+def _create_chat_model(model_id: str, *, cli_timeout_seconds: int = 300) -> Any:
+    if is_cli_model_id(model_id):
+        return create_cli_chat_model(
+            model_id, timeout_seconds=cli_timeout_seconds
+        )
     return init_chat_model(model_id, temperature=0)
+
+
+def create_chat_model() -> Any:
+    """Create the teaching model while preserving the first article's public API."""
+
+    load_dotenv()
+    settings = ModelSettings.from_environ(os.environ)
+    return _create_chat_model(
+        settings.chat_model_id,
+        cli_timeout_seconds=settings.cli_timeout_seconds,
+    )
+
+
+def create_model_suite() -> LearningCoachModels:
+    """Create role-specific models and negotiate their structured output methods."""
+
+    load_dotenv()
+    settings = ModelSettings.from_environ(os.environ)
+    chat_model = _create_chat_model(
+        settings.chat_model_id,
+        cli_timeout_seconds=settings.cli_timeout_seconds,
+    )
+    assessment_model = (
+        chat_model
+        if settings.assessment_model_id == settings.chat_model_id
+        else _create_chat_model(
+            settings.assessment_model_id,
+            cli_timeout_seconds=settings.cli_timeout_seconds,
+        )
+    )
+    return LearningCoachModels.from_models(
+        chat_model,
+        assessment_model,
+        structured_output_strategy=settings.structured_output_strategy,
+        image_input_policy=settings.image_input_policy,
+    )

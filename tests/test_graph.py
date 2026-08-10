@@ -3,7 +3,8 @@ from typing import Any
 from langgraph.types import Command
 
 from learning_coach.graph import build_learning_graph
-from learning_coach.schemas import Assessment
+from learning_coach.nodes import LearningCoachNodes
+from learning_coach.schemas import Assessment, Diagnostic
 
 
 class FakeMessage:
@@ -11,8 +12,20 @@ class FakeMessage:
         self.text = text
 
 
-class FakeAssessmentModel:
-    def invoke(self, messages: list[tuple[str, str]]) -> Assessment:
+class FakeStructuredModel:
+    def __init__(self, owner: "FakeChatModel", schema: type[Any]) -> None:
+        self.owner = owner
+        self.schema = schema
+
+    def invoke(self, messages: list[Any]) -> Diagnostic | Assessment:
+        if self.schema is Diagnostic:
+            self.owner.diagnostic_messages = messages
+            return Diagnostic(
+                question="两个并行节点都更新 results 时，State 应怎样保存？",
+                focus="Reducer 合并语义",
+                difficulty="application",
+            )
+        assert self.schema is Assessment
         return Assessment(
             score=86,
             feedback="已经能说明覆盖与合并的区别。",
@@ -22,9 +35,15 @@ class FakeAssessmentModel:
 
 class FakeChatModel:
     def __init__(self) -> None:
+        self.profile = {
+            "structured_output": True,
+            "tool_calling": True,
+            "image_inputs": True,
+        }
+        self.diagnostic_messages: list[Any] = []
+        self.structured_methods: list[str] = []
         self.responses = iter(
             [
-                "两个并行节点都更新 results 时，State 应怎样保存？",
                 "默认更新会覆盖旧值，Reducer 可以定义列表合并规则。",
                 "请给出一个需要 operator.add 的 State 字段。",
                 "你已经理解合并规则，下一步练习并行分支中的状态设计。",
@@ -34,9 +53,11 @@ class FakeChatModel:
     def invoke(self, messages: list[tuple[str, str]]) -> FakeMessage:
         return FakeMessage(next(self.responses))
 
-    def with_structured_output(self, schema: type[Any]) -> FakeAssessmentModel:
-        assert schema is Assessment
-        return FakeAssessmentModel()
+    def with_structured_output(
+        self, schema: type[Any], *, method: str
+    ) -> FakeStructuredModel:
+        self.structured_methods.append(method)
+        return FakeStructuredModel(self, schema)
 
 
 def test_graph_pauses_for_two_answers_then_finishes() -> None:
@@ -54,4 +75,22 @@ def test_graph_pauses_for_two_answers_then_finishes() -> None:
     result = graph.invoke(Command(resume="Annotated[list, operator.add]"), config)
     assert result["score"] == 86
     assert result["attempts"] == 1
+    assert result["diagnostic_focus"] == "Reducer 合并语义"
+    assert result["diagnostic_difficulty"] == "application"
     assert "下一步" in result["summary"]
+
+
+def test_diagnostic_passes_standard_image_content_blocks() -> None:
+    model = FakeChatModel()
+    nodes = LearningCoachNodes(model)
+    image = {"type": "image", "base64": "aW1hZ2U=", "mime_type": "image/png"}
+
+    result = nodes.make_diagnostic(
+        {"topic": "状态图", "diagnostic_images": [image]}
+    )
+
+    user_message = model.diagnostic_messages[1]
+    assert user_message["role"] == "user"
+    assert user_message["content"][0]["type"] == "text"
+    assert user_message["content"][1] == image
+    assert result["diagnostic_focus"] == "Reducer 合并语义"
