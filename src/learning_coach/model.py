@@ -28,6 +28,8 @@ class ModelSettings:
 
     chat_model_id: str
     assessment_model_id: str
+    chat_fallback_model_id: str | None = None
+    assessment_fallback_model_id: str | None = None
     structured_output_strategy: StructuredOutputStrategy = "auto"
     image_input_policy: ImageInputPolicy = "auto"
     cli_timeout_seconds: int = 300
@@ -47,6 +49,14 @@ class ModelSettings:
         ).strip()
         if not assessment_model_id:
             assessment_model_id = chat_model_id
+
+        chat_fallback_model_id = (
+            environ.get("CHAT_FALLBACK_MODEL_ID", "").strip() or None
+        )
+        assessment_fallback_model_id = (
+            environ.get("ASSESSMENT_FALLBACK_MODEL_ID", "").strip()
+            or chat_fallback_model_id
+        )
 
         strategy = _choice(
             environ.get("STRUCTURED_OUTPUT_STRATEGY", "auto"),
@@ -68,6 +78,8 @@ class ModelSettings:
         return cls(
             chat_model_id=chat_model_id,
             assessment_model_id=assessment_model_id,
+            chat_fallback_model_id=chat_fallback_model_id,
+            assessment_fallback_model_id=assessment_fallback_model_id,
             structured_output_strategy=cast(StructuredOutputStrategy, strategy),
             image_input_policy=cast(ImageInputPolicy, image_policy),
             cli_timeout_seconds=cli_timeout_seconds,
@@ -166,6 +178,11 @@ class LearningCoachModels:
     diagnostic_method: StructuredOutputMethod
     assessment_method: StructuredOutputMethod
     accepts_images: bool
+    chat_fallback: Any | None = None
+    diagnostic_fallback: Any | None = None
+    assessment_fallback: Any | None = None
+    diagnostic_fallback_method: StructuredOutputMethod | None = None
+    assessment_fallback_method: StructuredOutputMethod | None = None
 
     @classmethod
     def from_models(
@@ -173,6 +190,8 @@ class LearningCoachModels:
         chat_model: Any,
         assessment_model: Any | None = None,
         *,
+        chat_fallback_model: Any | None = None,
+        assessment_fallback_model: Any | None = None,
         structured_output_strategy: StructuredOutputStrategy = "auto",
         image_input_policy: ImageInputPolicy = "auto",
     ) -> "LearningCoachModels":
@@ -185,6 +204,18 @@ class LearningCoachModels:
         assessment, assessment_method = _with_structured_output(
             assessment_base, Assessment, structured_output_strategy
         )
+        diagnostic_fallback = None
+        diagnostic_fallback_method = None
+        if chat_fallback_model is not None:
+            diagnostic_fallback, diagnostic_fallback_method = _with_structured_output(
+                chat_fallback_model, Diagnostic, structured_output_strategy
+            )
+        assessment_fallback = None
+        assessment_fallback_method = None
+        if assessment_fallback_model is not None:
+            assessment_fallback, assessment_fallback_method = _with_structured_output(
+                assessment_fallback_model, Assessment, structured_output_strategy
+            )
         chat_capabilities = ModelCapabilities.from_model(chat_model)
         return cls(
             chat=chat_model,
@@ -196,6 +227,11 @@ class LearningCoachModels:
             accepts_images=image_inputs_enabled(
                 chat_capabilities, image_input_policy
             ),
+            chat_fallback=chat_fallback_model,
+            diagnostic_fallback=diagnostic_fallback,
+            assessment_fallback=assessment_fallback,
+            diagnostic_fallback_method=diagnostic_fallback_method,
+            assessment_fallback_method=assessment_fallback_method,
         )
 
 
@@ -223,21 +259,29 @@ def create_model_suite() -> LearningCoachModels:
 
     load_dotenv()
     settings = ModelSettings.from_environ(os.environ)
-    chat_model = _create_chat_model(
-        settings.chat_model_id,
-        cli_timeout_seconds=settings.cli_timeout_seconds,
-    )
-    assessment_model = (
-        chat_model
-        if settings.assessment_model_id == settings.chat_model_id
-        else _create_chat_model(
-            settings.assessment_model_id,
-            cli_timeout_seconds=settings.cli_timeout_seconds,
-        )
-    )
+    models_by_id: dict[str, Any] = {}
+
+    def model_for(model_id: str | None) -> Any | None:
+        if model_id is None:
+            return None
+        if model_id not in models_by_id:
+            models_by_id[model_id] = _create_chat_model(
+                model_id,
+                cli_timeout_seconds=settings.cli_timeout_seconds,
+            )
+        return models_by_id[model_id]
+
+    chat_model = model_for(settings.chat_model_id)
+    assessment_model = model_for(settings.assessment_model_id)
+    chat_fallback_model = model_for(settings.chat_fallback_model_id)
+    assessment_fallback_model = model_for(settings.assessment_fallback_model_id)
+    assert chat_model is not None
+    assert assessment_model is not None
     return LearningCoachModels.from_models(
         chat_model,
         assessment_model,
+        chat_fallback_model=chat_fallback_model,
+        assessment_fallback_model=assessment_fallback_model,
         structured_output_strategy=settings.structured_output_strategy,
         image_input_policy=settings.image_input_policy,
     )

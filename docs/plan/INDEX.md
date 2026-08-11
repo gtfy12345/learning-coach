@@ -5,7 +5,17 @@
 
 ---
 
-*暂无计划文档*
+## 1 进行中（Active）
+
+| 计划 | 文件 | 版本 | 更新日期 |
+|------|------|------|----------|
+
+## 2 已完成（Completed）
+
+| 计划 | 文件 | 版本 | 完成日期 |
+|------|------|------|----------|
+| [LCEL Runnable 任务层](./lcel-runnable-task-layer/) | [implementation](./lcel-runnable-task-layer/implementation.md) / [checklist](./lcel-runnable-task-layer/implementation-checklist.md) | 1.0 | 2026-08-12 |
+| ↳ 单元测试 | [test-plan](./lcel-runnable-task-layer/unit-test-plan.md) / [checklist](./lcel-runnable-task-layer/unit-test-plan-checklist.md) | 1.0 | 2026-08-12 |
 
 <!--
 示例格式：

@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成第二阶段的模型层扩展：
+项目已经跑通第一条教学工作流，并完成模型层与 LCEL 任务层扩展：
 
 ```mermaid
 flowchart LR
@@ -30,6 +30,8 @@ flowchart LR
 - Pydantic 结构化诊断与结构化评价
 - Provider 原生 JSON Schema 与 Tool Strategy 回退
 - 本地图片和图片 URL 的跨 Provider 标准 content blocks
+- 由 Prompt、模型和解析器组成的五类 LCEL Runnable
+- 教学模型与评价模型的可选完整任务回退
 - LangGraph State、Node、Edge 和 Conditional Edge
 - 可终止的补救循环
 - `interrupt()` 人工输入
@@ -113,7 +115,7 @@ PYTHONPATH=src python -m learning_coach web
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/health` | 服务健康检查 |
-| `GET /api/config` | 返回脱敏后的模型配置和图片能力 |
+| `GET /api/config` | 返回脱敏后的主/备用模型配置和图片能力 |
 | `POST /api/sessions` | 使用主题和可选图片创建学习会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 
@@ -125,6 +127,19 @@ ASSESSMENT_MODEL_ID=anthropic:claude-sonnet-4-6
 OPENAI_API_KEY=你的 OpenAI API Key
 ANTHROPIC_API_KEY=你的 Anthropic API Key
 ```
+
+如果希望一次任务在主模型调用或输出校验失败后切换到备用模型，可以增加：
+
+```dotenv
+CHAT_MODEL_ID=openai:gpt-5-mini
+CHAT_FALLBACK_MODEL_ID=anthropic:claude-sonnet-4-6
+
+ASSESSMENT_MODEL_ID=openai:gpt-5-mini
+# 未填写时自动继承 CHAT_FALLBACK_MODEL_ID
+ASSESSMENT_FALLBACK_MODEL_ID=google_genai:gemini-2.5-flash-lite
+```
+
+备用模型是可选配置。LCEL 会对完整的 `Prompt | Model | Parser` 任务使用一次 `with_fallbacks()`：Provider 调用、CLI 调用或输出验证失败都可以触发备用链；主备均失败时保留主链异常，不会无限重试。图片会原样传给备用模型，不会为了降级而静默删除。
 
 也可以把模型切换到 Google Gemini：
 
@@ -205,6 +220,26 @@ STRUCTURED_OUTPUT_STRATEGY=native
 
 可选值为 `auto`、`native` 和 `tool`。`auto` 优先使用模型 profile 声明的原生 Structured Output，否则回退到 function calling；`gemini_cli:` 会使用适配器明确声明的 `prompt_json` 路径，并通过 Pydantic 校验和一次纠错重试完成结构化输出。
 
+### LCEL Runnable 任务层
+
+`runnables.py` 把每次模型任务拆成相同的三段：Prompt 负责把普通字典转换为 Messages，模型套件处理 Provider 与结构化能力差异，输出解析器把结果固定成 `str`、`Diagnostic` 或 `Assessment`。LangGraph 节点只负责从 State 取值、调用任务和写回局部更新。
+
+```python
+from learning_coach.model import create_model_suite
+from learning_coach.runnables import LearningCoachRunnables
+
+tasks = LearningCoachRunnables.from_models(create_model_suite())
+
+questions = tasks.quiz.batch(
+    [
+        {"topic": "LCEL", "explanation": "Runnable 可以顺序组合。"},
+        {"topic": "LangGraph", "explanation": "StateGraph 负责跨步骤状态。"},
+    ]
+)
+```
+
+这些任务可以独立 `invoke` 或 `batch`；放回 LangGraph 后，图仍负责诊断、人工回答、补救循环和总结的执行顺序。
+
 ### 图片输入
 
 诊断阶段可以同时发送本地图片或图片 URL，`--image` 可以重复使用：
@@ -249,6 +284,7 @@ learning-coach/
 │       ├── media.py
 │       ├── model.py
 │       ├── nodes.py
+│       ├── runnables.py
 │       ├── schemas.py
 │       ├── static/
 │       │   ├── app.js
@@ -270,6 +306,7 @@ learning-coach/
 - `state.py`：学习过程、结构化诊断信息和图片 content blocks 保存哪些数据。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
+- `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
 - `graph.py`：节点之间的固定边、条件边和循环。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
@@ -288,7 +325,7 @@ learning-coach/
 | 1 | 从模型调用到学习闭环 | 诊断、讲解、练习、评价和补救 |
 | 2 | 多模型、多模态与结构化输出 | 主流 API、OpenAI-compatible 服务及登录适配 |
 | 2.5 | Web MVP | FastAPI、本地学习页面、图片上传和浏览器会话恢复 |
-| 3 | Runnable 与 LCEL | 资料预处理、批量抽取和并行分析 |
+| 3 | Runnable 与 LCEL | 可复用任务链、批处理和完整任务回退 |
 | 4 | Context Engineering 与 Middleware | 动态组织教学上下文、工具和预算 |
 | 5 | 多模态学习资料摄取 | 读取文档、网页、图片与代码并保留来源 |
 | 6 | 自校正 Hybrid RAG | 检索、重排、查询改写与证据质量判断 |
@@ -307,6 +344,7 @@ learning-coach/
 - Web MVP 目前只面向本机使用，没有用户账号、数据库、跨进程恢复或公网部署。
 - 评分由模型完成，不能直接等同于真实掌握程度。
 - model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
+- LCEL fallback 只在任务抛出异常时切换一次，不做负载均衡，也不会根据答案质量自动换模型。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。
 - 外层是确定性 Workflow；工具接入后，才会让 Agent 在局部范围内自主选择动作。

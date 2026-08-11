@@ -184,9 +184,16 @@ request("/api/config")
     if (!config.configured) throw { detail: config.error };
     modelPill.classList.add("ready");
     const sameModel = config.chat_model_id === config.assessment_model_id;
-    modelLabel.textContent = sameModel
+    const primaryLabel = sameModel
       ? config.chat_model_id
       : `${config.chat_model_id} · 评价 ${config.assessment_model_id}`;
+    const fallbackModels = [
+      config.chat_fallback_model_id,
+      config.assessment_fallback_model_id,
+    ].filter((model, index, models) => model && models.indexOf(model) === index);
+    modelLabel.textContent = fallbackModels.length
+      ? `${primaryLabel} · 备用 ${fallbackModels.join(" / ")}`
+      : primaryLabel;
     if (!config.accepts_images) {
       imageInput.disabled = true;
       uploadTitle.textContent = "当前模型未声明图片能力";

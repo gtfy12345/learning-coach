@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-12](./2026-08-12-lcel-runnable-task-layer-assessment.md) | LCEL Runnable 任务层交付复盘 | #assessment |
 | [2026-08-10](./2026-08-10-web-mvp-assessment.md) | Web MVP 交付复盘 | #assessment |
 | [2026-08-09](./2026-08-09-cli-login-authentication-assessment.md) | 官方 CLI 登录态与 API Key 双通道交付复盘 | #assessment |
 

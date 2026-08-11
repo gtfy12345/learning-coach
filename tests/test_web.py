@@ -1,15 +1,11 @@
 from typing import Any
 
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 
 from learning_coach.model import LearningCoachModels
 from learning_coach.schemas import Assessment, Diagnostic
 from learning_coach.web import LearningSessionService, create_app
-
-
-class FakeMessage:
-    def __init__(self, text: str) -> None:
-        self.text = text
 
 
 class FakeStructuredModel:
@@ -17,9 +13,13 @@ class FakeStructuredModel:
         self.owner = owner
         self.schema = schema
 
-    def invoke(self, messages: list[Any]) -> Diagnostic | Assessment:
+    def invoke(self, messages: Any) -> Diagnostic | Assessment:
         if self.schema is Diagnostic:
-            self.owner.diagnostic_messages = messages
+            self.owner.diagnostic_messages = (
+                list(messages.to_messages())
+                if hasattr(messages, "to_messages")
+                else list(messages)
+            )
             return Diagnostic(
                 question="StateGraph 的条件边负责什么？",
                 focus="条件路由",
@@ -56,8 +56,8 @@ class FakeChatModel:
         self.responses = iter(responses)
         self.diagnostic_messages: list[Any] = []
 
-    def invoke(self, messages: list[Any]) -> FakeMessage:
-        return FakeMessage(next(self.responses))
+    def invoke(self, messages: Any) -> AIMessage:
+        return AIMessage(content=next(self.responses))
 
     def with_structured_output(
         self, schema: type[Any], *, method: str
@@ -158,7 +158,7 @@ def test_image_upload_enters_the_diagnostic_message() -> None:
     )
 
     assert response.status_code == 201
-    content = model.diagnostic_messages[1]["content"]
+    content = model.diagnostic_messages[1].content
     assert content[1]["type"] == "image"
     assert content[1]["mime_type"] == "image/png"
 
@@ -184,6 +184,35 @@ def test_config_endpoint_never_exposes_credentials() -> None:
         "configured": True,
         "chat_model_id": "fake:coach",
         "assessment_model_id": "fake:assessment",
+        "accepts_images": True,
+    }
+    assert "api_key" not in response.text.lower()
+
+
+def test_config_endpoint_exposes_fallback_ids_without_credentials() -> None:
+    model = FakeChatModel()
+    models = LearningCoachModels.from_models(
+        model,
+        chat_fallback_model=model,
+        assessment_fallback_model=model,
+    )
+    service = LearningSessionService(
+        models=models,
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+        chat_fallback_model_id="fake:coach-fallback",
+        assessment_fallback_model_id="fake:assessment-fallback",
+    )
+    client = TestClient(create_app(service=service))
+
+    response = client.get("/api/config")
+
+    assert response.json() == {
+        "configured": True,
+        "chat_model_id": "fake:coach",
+        "assessment_model_id": "fake:assessment",
+        "chat_fallback_model_id": "fake:coach-fallback",
+        "assessment_fallback_model_id": "fake:assessment-fallback",
         "accepts_images": True,
     }
     assert "api_key" not in response.text.lower()

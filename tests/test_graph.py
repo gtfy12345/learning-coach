@@ -1,15 +1,13 @@
 from typing import Any
 
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from learning_coach.graph import build_learning_graph
 from learning_coach.nodes import LearningCoachNodes
+from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import Assessment, Diagnostic
-
-
-class FakeMessage:
-    def __init__(self, text: str) -> None:
-        self.text = text
 
 
 class FakeStructuredModel:
@@ -17,9 +15,13 @@ class FakeStructuredModel:
         self.owner = owner
         self.schema = schema
 
-    def invoke(self, messages: list[Any]) -> Diagnostic | Assessment:
+    def invoke(self, messages: Any) -> Diagnostic | Assessment:
         if self.schema is Diagnostic:
-            self.owner.diagnostic_messages = messages
+            self.owner.diagnostic_messages = (
+                list(messages.to_messages())
+                if hasattr(messages, "to_messages")
+                else list(messages)
+            )
             return Diagnostic(
                 question="两个并行节点都更新 results 时，State 应怎样保存？",
                 focus="Reducer 合并语义",
@@ -50,8 +52,8 @@ class FakeChatModel:
             ]
         )
 
-    def invoke(self, messages: list[tuple[str, str]]) -> FakeMessage:
-        return FakeMessage(next(self.responses))
+    def invoke(self, messages: Any) -> AIMessage:
+        return AIMessage(content=next(self.responses))
 
     def with_structured_output(
         self, schema: type[Any], *, method: str
@@ -90,7 +92,60 @@ def test_diagnostic_passes_standard_image_content_blocks() -> None:
     )
 
     user_message = model.diagnostic_messages[1]
-    assert user_message["role"] == "user"
-    assert user_message["content"][0]["type"] == "text"
-    assert user_message["content"][1] == image
+    assert user_message.type == "human"
+    assert user_message.content[0]["type"] == "text"
+    assert user_message.content[1] == image
     assert result["diagnostic_focus"] == "Reducer 合并语义"
+
+
+def test_nodes_delegate_state_projection_to_runnables() -> None:
+    tasks = LearningCoachRunnables(
+        diagnostic=RunnableLambda(
+            lambda values: Diagnostic(
+                question=f"诊断 {values['topic']}",
+                focus="Runnable",
+                difficulty="foundation",
+            )
+        ),
+        teaching=RunnableLambda(
+            lambda values: f"讲解 {values['diagnostic_answer']}"
+        ),
+        quiz=RunnableLambda(lambda values: f"练习 {values['explanation']}"),
+        assessment=RunnableLambda(
+            lambda values: Assessment(
+                score=90,
+                feedback=f"已评价 {values['quiz_answer']}",
+                missing_point="无",
+            )
+        ),
+        summary=RunnableLambda(
+            lambda values: f"总结 {values['score']} {values['feedback']}"
+        ),
+    )
+    nodes = LearningCoachNodes(tasks)
+
+    diagnostic = nodes.make_diagnostic({"topic": "LCEL"})
+    teaching = nodes.teach(
+        {
+            "topic": "LCEL",
+            **diagnostic,
+            "diagnostic_answer": "使用管道组合。",
+        }
+    )
+    quiz = nodes.make_quiz({"topic": "LCEL", **teaching})
+    assessment = nodes.assess(
+        {
+            "topic": "LCEL",
+            **quiz,
+            "quiz_answer": "Prompt | Model | Parser",
+            "attempts": 0,
+        }
+    )
+    summary = nodes.summarize({"topic": "LCEL", **assessment})
+
+    assert diagnostic["diagnostic_question"] == "诊断 LCEL"
+    assert teaching["explanation"] == "讲解 使用管道组合。"
+    assert quiz["quiz_question"].startswith("练习")
+    assert assessment["score"] == 90
+    assert assessment["attempts"] == 1
+    assert summary["summary"].startswith("总结 90")

@@ -1,0 +1,36 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: lcel-runnable-task-layer
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - lcel-runnable-task-layer
+      - LCEL Runnable
+      - 可复用任务链
+    keywords:
+      - prompt model parser fallback
+      - RunnableSequence
+      - with_fallbacks
+      - CHAT_FALLBACK_MODEL_ID
+      - ASSESSMENT_FALLBACK_MODEL_ID
+    relatedSpecs:
+      - ../../spec/lcel-runnable-task-layer-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/lcel-runnable-task-layer-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/model.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/nodes.py
+          - tests/test_runnables.py
+        apiNames:
+          - LearningCoachModels
+          - LearningCoachRunnables
+          - build_learning_graph

@@ -56,6 +56,8 @@ class PublicModelConfig(BaseModel):
     configured: bool
     chat_model_id: str | None = None
     assessment_model_id: str | None = None
+    chat_fallback_model_id: str | None = None
+    assessment_fallback_model_id: str | None = None
     accepts_images: bool | None = None
     error: str | None = None
 
@@ -70,12 +72,16 @@ class LearningSessionService:
         models_factory: Callable[[], LearningCoachModels] = create_model_suite,
         chat_model_id: str | None = None,
         assessment_model_id: str | None = None,
+        chat_fallback_model_id: str | None = None,
+        assessment_fallback_model_id: str | None = None,
     ) -> None:
         self._models = models
         self._models_factory = models_factory
         self._graph: Any | None = None
         self._chat_model_id = chat_model_id
         self._assessment_model_id = assessment_model_id
+        self._chat_fallback_model_id = chat_fallback_model_id
+        self._assessment_fallback_model_id = assessment_fallback_model_id
         self._sessions: set[str] = set()
         self._setup_lock = threading.Lock()
         self._invoke_lock = threading.Lock()
@@ -105,12 +111,18 @@ class LearningSessionService:
                 return PublicModelConfig(configured=False, error=str(exc))
             self._chat_model_id = settings.chat_model_id
             self._assessment_model_id = settings.assessment_model_id
+            self._chat_fallback_model_id = settings.chat_fallback_model_id
+            self._assessment_fallback_model_id = (
+                settings.assessment_fallback_model_id
+            )
 
         assert self._models is not None
         return PublicModelConfig(
             configured=True,
             chat_model_id=self._chat_model_id,
             assessment_model_id=self._assessment_model_id,
+            chat_fallback_model_id=self._chat_fallback_model_id,
+            assessment_fallback_model_id=self._assessment_fallback_model_id,
             accepts_images=self._models.accepts_images,
         )
 

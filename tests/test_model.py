@@ -7,6 +7,7 @@ from learning_coach.model import (
     ModelCapabilities,
     ModelSettings,
     create_chat_model,
+    create_model_suite,
     image_inputs_enabled,
     select_structured_output_method,
 )
@@ -45,6 +46,37 @@ def test_settings_support_separate_chat_and_assessment_models() -> None:
     assert settings.assessment_model_id == "anthropic:claude-sonnet-4-6"
     assert settings.structured_output_strategy == "tool"
     assert settings.image_input_policy == "allow"
+
+
+def test_settings_support_fallback_inheritance_and_role_override() -> None:
+    inherited = ModelSettings.from_environ(
+        {
+            "CHAT_MODEL_ID": "openai:gpt-5-mini",
+            "CHAT_FALLBACK_MODEL_ID": "anthropic:claude-sonnet-4-6",
+        }
+    )
+    overridden = ModelSettings.from_environ(
+        {
+            "CHAT_MODEL_ID": "openai:gpt-5-mini",
+            "CHAT_FALLBACK_MODEL_ID": "anthropic:claude-sonnet-4-6",
+            "ASSESSMENT_FALLBACK_MODEL_ID": "google_genai:gemini-2.5-flash-lite",
+        }
+    )
+
+    assert inherited.chat_fallback_model_id == "anthropic:claude-sonnet-4-6"
+    assert inherited.assessment_fallback_model_id == "anthropic:claude-sonnet-4-6"
+    assert overridden.assessment_fallback_model_id == (
+        "google_genai:gemini-2.5-flash-lite"
+    )
+
+
+def test_settings_leave_fallbacks_disabled_by_default() -> None:
+    settings = ModelSettings.from_environ(
+        {"CHAT_MODEL_ID": "openai:gpt-5-mini"}
+    )
+
+    assert settings.chat_fallback_model_id is None
+    assert settings.assessment_fallback_model_id is None
 
 
 def test_settings_keep_legacy_model_id_compatible() -> None:
@@ -133,6 +165,60 @@ def test_model_suite_negotiates_each_role_independently() -> None:
     assert suite.accepts_images is True
     assert chat.structured_calls[0][1] == "function_calling"
     assert assessment.structured_calls[0][1] == "json_schema"
+
+
+def test_model_suite_negotiates_fallback_roles_independently() -> None:
+    chat = FakeModel(
+        {"structured_output": True, "tool_calling": True, "image_inputs": True}
+    )
+    assessment = FakeModel(
+        {"structured_output": True, "tool_calling": True, "image_inputs": False}
+    )
+    chat_fallback = FakeModel(
+        {"structured_output": False, "tool_calling": True, "image_inputs": True}
+    )
+    assessment_fallback = FakeModel(
+        {"structured_output": True, "tool_calling": True, "image_inputs": False}
+    )
+
+    suite = LearningCoachModels.from_models(
+        chat,
+        assessment,
+        chat_fallback_model=chat_fallback,
+        assessment_fallback_model=assessment_fallback,
+    )
+
+    assert suite.chat_fallback is chat_fallback
+    assert suite.diagnostic_fallback_method == "function_calling"
+    assert suite.assessment_fallback_method == "json_schema"
+    assert chat_fallback.structured_calls[0][1] == "function_calling"
+    assert assessment_fallback.structured_calls[0][1] == "json_schema"
+
+
+def test_create_model_suite_reuses_matching_fallback_model_id(monkeypatch) -> None:
+    created: list[str] = []
+
+    def fake_create(model_id: str, *, cli_timeout_seconds: int = 300) -> FakeModel:
+        created.append(model_id)
+        return FakeModel(
+            {
+                "structured_output": True,
+                "tool_calling": True,
+                "image_inputs": True,
+            }
+        )
+
+    monkeypatch.setenv("CHAT_MODEL_ID", "openai:primary")
+    monkeypatch.setenv("ASSESSMENT_MODEL_ID", "openai:primary")
+    monkeypatch.setenv("CHAT_FALLBACK_MODEL_ID", "anthropic:fallback")
+    monkeypatch.delenv("ASSESSMENT_FALLBACK_MODEL_ID", raising=False)
+    monkeypatch.setattr("learning_coach.model._create_chat_model", fake_create)
+
+    suite = create_model_suite()
+
+    assert created == ["openai:primary", "anthropic:fallback"]
+    assert suite.chat_fallback is not None
+    assert suite.assessment_fallback is not None
 
 
 def test_image_policy_requires_profile_support_unless_overridden() -> None:
