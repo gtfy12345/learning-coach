@@ -32,6 +32,10 @@ flowchart LR
 - 本地图片和图片 URL 的跨 Provider 标准 content blocks
 - 由 Prompt、模型和解析器组成的五类 LCEL Runnable
 - 教学模型与评价模型的可选完整任务回退
+- `RunnableSequence`、`RunnableParallel`、`RunnablePassthrough`、`RunnableAssign` 和 `RunnableLambda` 高级组合
+- 基于用户粘贴文本的确定性内存检索、带来源讲解和 Runnable 图导出
+- Runnable 的同步、异步、批处理与流式执行，以及 Web SSE、取消和超时
+- 默认关闭的 LangSmith 任务追踪标签与安全元数据
 - LangGraph State、Node、Edge 和 Conditional Edge
 - 可终止的补救循环
 - `interrupt()` 人工输入
@@ -102,10 +106,12 @@ PYTHONPATH=src python -m learning_coach web
 
 - 输入学习主题并生成结构化诊断题
 - 上传一张本地图片参与诊断
+- 粘贴一段可选学习资料，在讲解阶段检索相关片段并显示来源
 - 提交诊断回答，查看针对性讲解和迁移练习
 - 提交练习答案，查看结构化评分、反馈和知识缺口
 - 未达到 80 分时自动补讲并继续出题，最多评价两次
 - 完成后展示最终得分与学习小结
+- 通过 SSE 增量展示讲解、练习和小结，并可停止当前生成
 - 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
 
 当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
@@ -118,6 +124,14 @@ PYTHONPATH=src python -m learning_coach web
 | `GET /api/config` | 返回脱敏后的主/备用模型配置和图片能力 |
 | `POST /api/sessions` | 使用主题和可选图片创建学习会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
+| `POST /api/sessions/stream` | 使用主题、可选图片和可选纯文本资料流式创建会话 |
+| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、state 和 done 事件 |
+
+两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
+
+```dotenv
+WEB_RUN_TIMEOUT_SECONDS=120
+```
 
 如果要让评价使用另一个模型或 Provider：
 
@@ -238,7 +252,43 @@ questions = tasks.quiz.batch(
 )
 ```
 
-这些任务可以独立 `invoke` 或 `batch`；放回 LangGraph 后，图仍负责诊断、人工回答、补救循环和总结的执行顺序。
+五类任务都实现 Runnable 统一接口，可以使用 `invoke`、`ainvoke`、`batch` 和 `stream`。不支持原生分块的官方 CLI 模型会退化为一个完整文本块；支持流式的 LangChain Chat Model 可以逐块产生内容。
+
+教学 Runnable 不是孤立示例。用户粘贴资料后，它会在内存中完成以下组合：
+
+```mermaid
+flowchart LR
+    I[教学任务输入] --> P[RunnableParallel]
+    P --> K[RunnablePassthrough 保留任务]
+    P --> R[RunnableLambda 词法检索]
+    K --> A[RunnableAssign 补充上下文]
+    R --> A
+    A --> S[RunnableSequence]
+    S --> O[Prompt / Model / Parser / Fallback]
+    O --> G[讲解文本与来源]
+```
+
+词法 Retriever 不需要 Embedding、向量数据库或网络：它对最多 50,000 字的纯文本做稳定切块，同时考虑英文词元与中文连续字符片段，最多返回三个正相关片段。它适合本篇验证 RAG 数据流，但不是语义向量检索的替代品。
+
+可以导出任一任务的 Mermaid 组合图：
+
+```python
+print(tasks.draw_mermaid("teaching"))
+```
+
+放回 LangGraph 后，图仍负责诊断、人工回答、补救循环和总结的执行顺序。文本节点通过 LangGraph custom stream 发出 `status`、`token` 和 `sources`，完整内容聚合完成后才写入 State；浏览器取消时不会把半截讲解写进节点状态。
+
+### 可选 LangSmith 追踪
+
+Runnable 已携带稳定的任务名、`learning-coach` 标签和不含正文的显式 metadata。追踪默认关闭；需要时设置：
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=你的 LangSmith API Key
+LANGSMITH_PROJECT=learning-coach
+```
+
+项目不会主动把学习资料、图片 base64、学习者回答、Prompt、模型输出或密钥复制进 metadata。不过，LangSmith 是否记录模型输入输出仍由你自己的追踪与隐私配置决定；粘贴私人资料前请先确认该配置。
 
 ### 图片输入
 
@@ -284,6 +334,7 @@ learning-coach/
 │       ├── media.py
 │       ├── model.py
 │       ├── nodes.py
+│       ├── retrieval.py
 │       ├── runnables.py
 │       ├── schemas.py
 │       ├── static/
@@ -299,6 +350,7 @@ learning-coach/
     ├── test_graph.py
     ├── test_media.py
     ├── test_model.py
+    ├── test_retrieval.py
     ├── test_routing.py
     └── test_web.py
 ```
@@ -307,6 +359,7 @@ learning-coach/
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
+- `retrieval.py`：对用户粘贴的纯文本做确定性内存切块和词法检索。
 - `graph.py`：节点之间的固定边、条件边和循环。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
@@ -325,7 +378,7 @@ learning-coach/
 | 1 | 从模型调用到学习闭环 | 诊断、讲解、练习、评价和补救 |
 | 2 | 多模型、多模态与结构化输出 | 主流 API、OpenAI-compatible 服务及登录适配 |
 | 2.5 | Web MVP | FastAPI、本地学习页面、图片上传和浏览器会话恢复 |
-| 3 | Runnable 与 LCEL | 可复用任务链、批处理和完整任务回退 |
+| 3 | Runnable 与 LCEL | 高级组合、统一执行接口、内存 RAG、SSE、超时取消和追踪 |
 | 4 | Context Engineering 与 Middleware | 动态组织教学上下文、工具和预算 |
 | 5 | 多模态学习资料摄取 | 读取文档、网页、图片与代码并保留来源 |
 | 6 | 自校正 Hybrid RAG | 检索、重排、查询改写与证据质量判断 |
@@ -338,13 +391,15 @@ learning-coach/
 
 ## 当前边界
 
-- 图片目前只进入诊断节点，还没有文档解析、OCR、切分、索引或来源追踪。
-- 现在不会读取个人课程、论文或项目代码。
+- 图片目前只进入诊断节点；纯文本资料可以手动粘贴并在内存中切块、检索和显示来源，但还没有文件解析、OCR 或持久化索引。
+- 现在不会自动读取个人课程、论文或项目代码，也不会把粘贴资料保存到外部数据库。
 - `InMemorySaver` 只保存当前进程中的状态。
 - Web MVP 目前只面向本机使用，没有用户账号、数据库、跨进程恢复或公网部署。
 - 评分由模型完成，不能直接等同于真实掌握程度。
 - model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
 - LCEL fallback 只在任务抛出异常时切换一次，不做负载均衡，也不会根据答案质量自动换模型。
+- 当前 Retriever 是确定性词法匹配，不是语义向量检索；没有重排、查询改写或证据质量判断。
+- SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。
 - 外层是确定性 Workflow；工具接入后，才会让 Agent 在局部范围内自主选择动作。

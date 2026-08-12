@@ -1,0 +1,48 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: lcel-runnable-task-layer-follow-up-production-chain
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - lcel-runnable-task-layer-follow-up-production-chain
+      - LCEL 生产级组合
+      - 内存 RAG 与 SSE
+    keywords:
+      - RunnableParallel RunnablePassthrough RunnableAssign
+      - invoke ainvoke batch stream
+      - in-memory retriever grounded teaching sources
+      - SSE cancellation timeout AbortController
+      - LangSmith tracing runnable graph mermaid
+    relatedSpecs:
+      - ../../spec/lcel-production-chain-design.md
+      - ../../spec/lcel-runnable-task-layer-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/lcel-production-chain-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../lcel-runnable-task-layer/implementation.md
+        - ../../reports/2026-08-12-lcel-runnable-task-layer-assessment.md
+      discovery:
+        packages:
+          - src/learning_coach/retrieval.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/state.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests
+        apiNames:
+          - LearningCoachRunnables
+          - LearningSessionService
+          - SessionView
+          - build_learning_graph
+        uiRoutes:
+          - /
+          - /api/sessions/stream
+          - /api/sessions/{session_id}/answers/stream

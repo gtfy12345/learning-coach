@@ -77,3 +77,7 @@
 - `.venv/bin/python -m compileall -q src tests`：通过。
 - `git diff --check`：通过。
 - 第 03 篇公众号 DOCX 已完成 9 页逐页渲染检查；表格几何、可访问性、标题层级、图片尺寸、PAGE 字段和压缩包完整性检查通过。
+
+## 后续修复 / Follow-ups
+
+- 2026-08-12: [LCEL 生产级组合 Follow-up](../lcel-runnable-task-layer-follow-up-production-chain/implementation.md) - 增加高级 Runnable 组合、内存 RAG、SSE 流式、取消超时、追踪与图导出。

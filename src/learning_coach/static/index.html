@@ -53,6 +53,9 @@
               <button class="primary-button" type="submit">
                 <span>开始诊断</span><span aria-hidden="true">→</span>
               </button>
+              <button class="text-button cancel-button" id="cancel-start" type="button" hidden>
+                停止
+              </button>
             </div>
 
             <label class="upload-box" for="image">
@@ -67,6 +70,19 @@
                 type="file"
                 accept="image/png,image/jpeg,image/gif,image/webp"
               />
+            </label>
+            <label class="material-box" for="study-material">
+              <span>
+                <strong>粘贴可选学习资料</strong>
+                <small>纯文本 · 最多 50,000 字 · 仅保存在当前内存会话</small>
+              </span>
+              <textarea
+                id="study-material"
+                name="study_material"
+                rows="5"
+                maxlength="50000"
+                placeholder="例如课程笔记、技术说明或代码概念。讲解阶段会检索相关片段并显示来源。"
+              ></textarea>
             </label>
             <p class="form-error" id="setup-error" role="alert"></p>
           </form>
@@ -104,9 +120,14 @@
             ></textarea>
             <div class="answer-actions">
               <small>⌘/Ctrl + Enter 提交</small>
-              <button class="primary-button" type="submit">
-                <span>提交回答</span><span aria-hidden="true">→</span>
-              </button>
+              <div class="run-actions">
+                <button class="text-button cancel-button" id="cancel-run" type="button" hidden>
+                  停止生成
+                </button>
+                <button class="primary-button" type="submit">
+                  <span>提交回答</span><span aria-hidden="true">→</span>
+                </button>
+              </div>
             </div>
             <p class="form-error" id="answer-error" role="alert"></p>
           </form>

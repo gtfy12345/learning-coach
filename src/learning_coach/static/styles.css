@@ -238,6 +238,13 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .upload-box small { margin-top: 3px; font-size: 11px; }
 .upload-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; color: var(--teal); background: var(--teal-soft); font-size: 18px; }
 
+.material-box { display: block; margin-top: 14px; }
+.material-box > span { display: block; margin-bottom: 9px; }
+.material-box strong, .material-box small { display: block; }
+.material-box strong { color: var(--ink); font-size: 13px; }
+.material-box small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.material-box textarea { min-height: 104px; }
+
 .form-error { min-height: 18px; margin: 10px 2px 0; color: #ae4545; font-size: 12px; }
 
 .feature-strip {
@@ -294,6 +301,8 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .answer-card { position: sticky; bottom: 18px; margin-top: 8px; backdrop-filter: blur(16px); }
 .answer-actions { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .answer-actions small { color: var(--muted); font-size: 10px; }
+.run-actions { display: flex; align-items: center; gap: 14px; }
+.cancel-button { color: #a44949; }
 
 .result-card { margin-top: 28px; padding: 28px; display: grid; grid-template-columns: 130px 1fr; gap: 28px; border-radius: 22px; color: white; background: var(--ink); box-shadow: 0 20px 48px rgba(22,42,53,0.2); }
 .score-orbit { width: 126px; height: 126px; display: flex; align-items: baseline; justify-content: center; padding-top: 34px; border: 1px solid rgba(227,193,132,0.5); border-radius: 50%; background: radial-gradient(circle, rgba(227,193,132,0.18), transparent 66%); }

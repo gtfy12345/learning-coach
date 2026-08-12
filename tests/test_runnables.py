@@ -1,11 +1,13 @@
+import asyncio
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.runnables.base import Runnable
 
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
-from learning_coach.schemas import Assessment, Diagnostic
+from learning_coach.schemas import Assessment, Diagnostic, GroundedTeaching
 
 
 def _messages(value: Any) -> list[Any]:
@@ -84,10 +86,11 @@ def test_task_runnables_compose_prompts_models_and_parsers() -> None:
             "diagnostic_answer": "后写入的值会覆盖旧值。",
             "feedback": "暂无",
             "missing_point": "暂无",
+            "study_material": "",
         }
     )
     quiz = tasks.quiz.invoke(
-        {"topic": "LangGraph Reducer", "explanation": teaching}
+        {"topic": "LangGraph Reducer", "explanation": teaching.text}
     )
     assessment = tasks.assessment.invoke(
         {
@@ -107,7 +110,9 @@ def test_task_runnables_compose_prompts_models_and_parsers() -> None:
 
     assert isinstance(diagnostic, Diagnostic)
     assert isinstance(assessment, Assessment)
-    assert teaching == "Reducer 决定并行更新如何合并。"
+    assert teaching == GroundedTeaching(
+        text="Reducer 决定并行更新如何合并。", sources=[]
+    )
     assert quiz == "请设计一个需要列表合并的 State。"
     assert summary.startswith("已掌握")
     diagnostic_content = model.diagnostic_messages[1].content
@@ -205,11 +210,12 @@ def test_complete_tasks_fall_back_on_model_and_validation_errors() -> None:
             "diagnostic_answer": "覆盖",
             "feedback": "暂无",
             "missing_point": "暂无",
+            "study_material": "",
         }
     )
     diagnostic = tasks.diagnostic.invoke({"topic": "Reducer"})
 
-    assert explanation == "备用模型完成讲解。"
+    assert explanation.text == "备用模型完成讲解。"
     assert diagnostic.question == "备用诊断题"
     assert primary.text_calls == fallback.text_calls == 1
     assert primary.structured_calls[Diagnostic] == 1
@@ -269,3 +275,133 @@ def test_fallback_failure_is_bounded_and_propagates() -> None:
 
     assert primary.text_calls == 1
     assert fallback.text_calls == 1
+
+
+def test_teaching_rag_composes_context_and_returns_sources() -> None:
+    model = FakeChatModel()
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(model)
+    )
+
+    result = tasks.teaching.invoke(
+        {
+            "topic": "LangGraph Reducer",
+            "diagnostic_focus": "Reducer 合并语义",
+            "diagnostic_difficulty": "application",
+            "diagnostic_answer": "后写入会覆盖。",
+            "feedback": "请补充并行更新。",
+            "missing_point": "列表字段的合并规则",
+            "study_material": """RunnableSequence 串联多个步骤。
+
+Reducer 决定 LangGraph 并行节点更新同一 State 字段时如何合并。""",
+        }
+    )
+
+    assert result.text == "Reducer 决定并行更新如何合并。"
+    assert result.sources
+    assert result.sources[0].source_id.startswith("material-1#chunk-")
+    teaching_message = model.text_messages[-1][1].content
+    assert "参考资料" in teaching_message
+    assert "并行节点" in teaching_message
+    assert result.sources[0].text in teaching_message
+
+
+def test_teaching_runnable_graph_contains_advanced_lcel_composition() -> None:
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(FakeChatModel())
+    )
+
+    graph_text = tasks.teaching.get_graph().draw_mermaid()
+
+    assert "Parallel" in graph_text
+    assert "Passthrough" in graph_text
+    assert "Lambda" in graph_text
+    exported = tasks.draw_mermaid("teaching")
+    assert "RunnableSequence" in exported
+    assert "RunnableAssign" in exported
+
+
+class StreamingChatModel(Runnable[Any, AIMessage]):
+    profile = {
+        "structured_output": True,
+        "tool_calling": True,
+        "image_inputs": True,
+    }
+
+    def invoke(
+        self, value: Any, config: Any | None = None, **kwargs: Any
+    ) -> AIMessage:
+        return AIMessage(content="第一段第二段")
+
+    def stream(
+        self, value: Any, config: Any | None = None, **kwargs: Any
+    ) -> Any:
+        yield AIMessageChunk(content="第一段")
+        yield AIMessageChunk(content="第二段")
+
+    async def astream(
+        self, value: Any, config: Any | None = None, **kwargs: Any
+    ) -> Any:
+        yield AIMessageChunk(content="第一段")
+        yield AIMessageChunk(content="第二段")
+
+    def with_structured_output(
+        self, schema: type[Any], *, method: str
+    ) -> FakeStructuredModel:
+        return FakeStructuredModel(FakeChatModel(), schema)
+
+
+def test_task_interfaces_support_async_batch_stream_and_graph_export() -> None:
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(StreamingChatModel())
+    )
+    teaching_input = {
+        "topic": "LCEL",
+        "diagnostic_focus": "Runnable",
+        "diagnostic_difficulty": "foundation",
+        "diagnostic_answer": "统一接口",
+        "feedback": "暂无",
+        "missing_point": "暂无",
+        "study_material": "LCEL Runnable 统一 invoke stream batch async 接口。",
+    }
+
+    sync_result = tasks.teaching.invoke(teaching_input)
+    async_result = asyncio.run(tasks.teaching.ainvoke(teaching_input))
+    chunks = list(tasks.teaching.stream(teaching_input))
+
+    async def collect_chunks() -> list[GroundedTeaching]:
+        return [chunk async for chunk in tasks.teaching.astream(teaching_input)]
+
+    async_chunks = asyncio.run(collect_chunks())
+    batch = tasks.teaching.batch([teaching_input, teaching_input])
+
+    assert sync_result.text == async_result.text == "第一段第二段"
+    assert "".join(chunk.text for chunk in chunks) == sync_result.text
+    assert "".join(chunk.text for chunk in async_chunks) == sync_result.text
+    assert [result.text for result in batch] == ["第一段第二段"] * 2
+    assert all(chunks[0].sources)
+    assert all(not chunk.sources for chunk in chunks[1:])
+    assert tasks.task("quiz") is tasks.quiz
+    assert "graph TD" in tasks.draw_mermaid("teaching")
+    assert "RunnableAssign" in tasks.draw_mermaid("teaching")
+    with pytest.raises(ValueError, match="未知 LCEL 任务"):
+        tasks.task("missing")
+
+
+def test_task_observability_config_uses_safe_stable_metadata() -> None:
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(FakeChatModel())
+    )
+
+    for name in ("diagnostic", "teaching", "quiz", "assessment", "summary"):
+        config = tasks.task(name).config
+        assert config["run_name"] == f"learning_coach_{name}"
+        assert config["tags"] == ["learning-coach", f"task:{name}"]
+        assert config["metadata"] == {
+            "component": "learning-coach",
+            "task": name,
+        }
+        serialized = str(config).lower()
+        assert "api_key" not in serialized
+        assert "study_material" not in serialized
+        assert "answer" not in serialized

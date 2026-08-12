@@ -8,6 +8,7 @@ from learning_coach.graph import build_learning_graph
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import Assessment, Diagnostic
+from learning_coach.schemas import GroundedTeaching
 
 
 class FakeStructuredModel:
@@ -108,7 +109,9 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
             )
         ),
         teaching=RunnableLambda(
-            lambda values: f"讲解 {values['diagnostic_answer']}"
+            lambda values: GroundedTeaching(
+                text=f"讲解 {values['diagnostic_answer']}", sources=[]
+            )
         ),
         quiz=RunnableLambda(lambda values: f"练习 {values['explanation']}"),
         assessment=RunnableLambda(
@@ -149,3 +152,47 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
     assert assessment["score"] == 90
     assert assessment["attempts"] == 1
     assert summary["summary"].startswith("总结 90")
+
+
+def test_graph_streams_task_status_text_and_sources_before_final_state() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "stream-learning-session"}}
+    material = "Reducer 用来合并并行节点对同一个 State 字段的更新。"
+    graph.invoke(
+        {
+            "topic": "LangGraph Reducer",
+            "attempts": 0,
+            "study_material": material,
+        },
+        config=config,
+    )
+
+    parts = list(
+        graph.stream(
+            Command(resume="后执行节点会覆盖旧值。"),
+            config=config,
+            stream_mode=["custom", "values"],
+            version="v2",
+        )
+    )
+    custom = [part["data"] for part in parts if part["type"] == "custom"]
+    values = [part["data"] for part in parts if part["type"] == "values"]
+
+    assert any(
+        event == {"event": "status", "task": "teaching", "status": "started"}
+        for event in custom
+    )
+    assert any(
+        event["event"] == "token"
+        and event["task"] == "teaching"
+        and "Reducer" in event["text"]
+        for event in custom
+    )
+    source_event = next(event for event in custom if event["event"] == "sources")
+    assert source_event["sources"][0]["source_id"].startswith(
+        "material-1#chunk-"
+    )
+    assert values[-1]["explanation"] == "默认更新会覆盖旧值，Reducer 可以定义列表合并规则。"
+    assert next(
+        part["interrupts"] for part in parts if part.get("interrupts")
+    )[0].value["kind"] == "quiz"

@@ -1,16 +1,32 @@
 from dataclasses import dataclass
-from typing import Any
+from collections.abc import AsyncIterator, Iterator
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.runnables import (
+    Runnable,
+    RunnableAssign,
+    RunnableLambda,
+    RunnableParallel,
+    RunnablePassthrough,
+    RunnableSequence,
+)
+from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from learning_coach.model import LearningCoachModels
-from learning_coach.schemas import Assessment, Diagnostic
+from learning_coach.retrieval import retrieve_study_sources
+from learning_coach.schemas import (
+    Assessment,
+    Diagnostic,
+    GroundedTeaching,
+    StudySource,
+)
 
 TaskInput = dict[str, Any]
+TaskName = Literal["diagnostic", "teaching", "quiz", "assessment", "summary"]
 
 
 DIAGNOSTIC_PROMPT = ChatPromptTemplate.from_messages(
@@ -34,6 +50,8 @@ TEACHING_PROMPT = ChatPromptTemplate.from_messages(
 诊断回答：{diagnostic_answer}
 上次反馈：{feedback}
 尚未掌握：{missing_point}
+参考资料：
+{study_context}
 请控制在 300 字内，不要只重复定义。""",
         ),
     ]
@@ -119,6 +137,152 @@ def _text_chain(
     return prompt | _as_runnable(model) | StrOutputParser()
 
 
+def _teaching_query(values: TaskInput) -> str:
+    return " ".join(
+        str(values.get(key, ""))
+        for key in ("topic", "diagnostic_focus", "feedback", "missing_point")
+    ).strip()
+
+
+def _retrieve_teaching_sources(values: TaskInput) -> list[StudySource]:
+    retrieved = retrieve_study_sources(
+        {
+            "query": _teaching_query(values),
+            "study_material": values.get("study_material", ""),
+        }
+    )
+    return [
+        StudySource(
+            source_id=source.source_id,
+            text=source.text,
+            score=source.score,
+        )
+        for source in retrieved
+    ]
+
+
+def _format_study_context(values: TaskInput) -> str:
+    sources = values.get("sources", [])
+    if not sources:
+        return "没有可用参考资料，请基于通用知识讲解，并避免声称引用了资料。"
+    return "\n\n".join(
+        f"[{source.source_id}] {source.text}"
+        for source in sources
+        if isinstance(source, StudySource)
+    )
+
+
+def _teaching_prompt_input(values: TaskInput) -> TaskInput:
+    task = dict(values["task"])
+    task["study_context"] = values["study_context"]
+    return task
+
+
+def _grounded_teaching(values: TaskInput) -> GroundedTeaching:
+    return GroundedTeaching.model_validate(values)
+
+
+class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
+    """Preserve text chunks while attaching sources to the first chunk."""
+
+    def invoke(
+        self,
+        input: TaskInput,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> GroundedTeaching:
+        return _grounded_teaching(input)
+
+    def transform(
+        self,
+        input: Iterator[TaskInput],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Iterator[GroundedTeaching]:
+        sources: list[StudySource] | None = None
+        buffered_text: list[str] = []
+        sources_emitted = False
+        for chunk in input:
+            if "sources" in chunk:
+                sources = list(chunk["sources"])
+            if "text" in chunk:
+                buffered_text.append(str(chunk["text"]))
+            if sources is not None and buffered_text:
+                for text in buffered_text:
+                    yield GroundedTeaching(
+                        text=text,
+                        sources=sources if not sources_emitted else [],
+                    )
+                    sources_emitted = True
+                buffered_text.clear()
+        for text in buffered_text:
+            yield GroundedTeaching(
+                text=text,
+                sources=(sources or []) if not sources_emitted else [],
+            )
+            sources_emitted = True
+
+    async def atransform(
+        self,
+        input: AsyncIterator[TaskInput],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[GroundedTeaching]:
+        sources: list[StudySource] | None = None
+        buffered_text: list[str] = []
+        sources_emitted = False
+        async for chunk in input:
+            if "sources" in chunk:
+                sources = list(chunk["sources"])
+            if "text" in chunk:
+                buffered_text.append(str(chunk["text"]))
+            if sources is not None and buffered_text:
+                for text in buffered_text:
+                    yield GroundedTeaching(
+                        text=text,
+                        sources=sources if not sources_emitted else [],
+                    )
+                    sources_emitted = True
+                buffered_text.clear()
+        for text in buffered_text:
+            yield GroundedTeaching(
+                text=text,
+                sources=(sources or []) if not sources_emitted else [],
+            )
+            sources_emitted = True
+
+
+def _grounded_teaching_chain(
+    prompt: ChatPromptTemplate,
+    model: Any,
+) -> Runnable[TaskInput, GroundedTeaching]:
+    retrieval = RunnableParallel(
+        task=RunnablePassthrough(),
+        sources=RunnableLambda(_retrieve_teaching_sources),
+    )
+    assign_context = RunnableAssign(
+        RunnableParallel(
+            study_context=RunnableLambda(_format_study_context),
+        ),
+        name="AssignStudyContext",
+    )
+    answer = RunnableSequence(
+        RunnableLambda(_teaching_prompt_input),
+        prompt,
+        _as_runnable(model),
+        StrOutputParser(),
+    )
+    return RunnableSequence(
+        retrieval,
+        assign_context,
+        RunnableParallel(
+            text=answer,
+            sources=RunnableLambda(lambda values: values["sources"]),
+        ),
+        GroundedTeachingParser(),
+    )
+
+
 def _with_optional_fallback(
     primary: Runnable[Any, Any],
     fallback: Runnable[Any, Any] | None,
@@ -126,15 +290,49 @@ def _with_optional_fallback(
     return primary.with_fallbacks([fallback]) if fallback is not None else primary
 
 
+def _configured_task(
+    name: TaskName,
+    runnable: Runnable[Any, Any],
+) -> Runnable[Any, Any]:
+    return runnable.with_config(
+        run_name=f"learning_coach_{name}",
+        tags=["learning-coach", f"task:{name}"],
+        metadata={"component": "learning-coach", "task": name},
+    )
+
+
 @dataclass(frozen=True)
 class LearningCoachRunnables:
     """Reusable LCEL tasks used by the learning workflow nodes."""
 
     diagnostic: Runnable[TaskInput, Diagnostic]
-    teaching: Runnable[TaskInput, str]
+    teaching: Runnable[TaskInput, GroundedTeaching]
     quiz: Runnable[TaskInput, str]
     assessment: Runnable[TaskInput, Assessment]
     summary: Runnable[TaskInput, str]
+
+    def task(self, name: TaskName | str) -> Runnable[Any, Any]:
+        tasks: dict[str, Runnable[Any, Any]] = {
+            "diagnostic": self.diagnostic,
+            "teaching": self.teaching,
+            "quiz": self.quiz,
+            "assessment": self.assessment,
+            "summary": self.summary,
+        }
+        try:
+            return tasks[name]
+        except KeyError as exc:
+            choices = ", ".join(tasks)
+            raise ValueError(
+                f"未知 LCEL 任务：{name}。可选值：{choices}。"
+            ) from exc
+
+    def draw_mermaid(self, name: TaskName | str) -> str:
+        legend = (
+            "%% LCEL composition: RunnableSequence, RunnableParallel, "
+            "RunnablePassthrough, RunnableAssign, RunnableLambda\n"
+        )
+        return legend + self.task(name).get_graph().draw_mermaid()
 
     @classmethod
     def from_models(cls, models: LearningCoachModels) -> "LearningCoachRunnables":
@@ -167,11 +365,11 @@ class LearningCoachRunnables:
             else None
         )
 
-        teaching_primary = _text_chain(TEACHING_PROMPT, models.chat)
+        teaching_primary = _grounded_teaching_chain(TEACHING_PROMPT, models.chat)
         quiz_primary = _text_chain(QUIZ_PROMPT, models.chat)
         summary_primary = _text_chain(SUMMARY_PROMPT, models.chat)
         teaching_fallback = (
-            _text_chain(TEACHING_PROMPT, models.chat_fallback)
+            _grounded_teaching_chain(TEACHING_PROMPT, models.chat_fallback)
             if models.chat_fallback is not None
             else None
         )
@@ -187,13 +385,25 @@ class LearningCoachRunnables:
         )
 
         return cls(
-            diagnostic=_with_optional_fallback(
-                diagnostic_primary, diagnostic_fallback
+            diagnostic=_configured_task(
+                "diagnostic",
+                _with_optional_fallback(diagnostic_primary, diagnostic_fallback),
             ),
-            teaching=_with_optional_fallback(teaching_primary, teaching_fallback),
-            quiz=_with_optional_fallback(quiz_primary, quiz_fallback),
-            assessment=_with_optional_fallback(
-                assessment_primary, assessment_fallback
+            teaching=_configured_task(
+                "teaching",
+                _with_optional_fallback(teaching_primary, teaching_fallback),
             ),
-            summary=_with_optional_fallback(summary_primary, summary_fallback),
+            quiz=_configured_task(
+                "quiz", _with_optional_fallback(quiz_primary, quiz_fallback)
+            ),
+            assessment=_configured_task(
+                "assessment",
+                _with_optional_fallback(
+                    assessment_primary, assessment_fallback
+                ),
+            ),
+            summary=_configured_task(
+                "summary",
+                _with_optional_fallback(summary_primary, summary_fallback),
+            ),
         )

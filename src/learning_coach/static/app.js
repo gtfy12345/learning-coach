@@ -4,6 +4,7 @@ const startForm = document.querySelector("#start-form");
 const answerForm = document.querySelector("#answer-form");
 const topicInput = document.querySelector("#topic");
 const imageInput = document.querySelector("#image");
+const studyMaterialInput = document.querySelector("#study-material");
 const uploadTitle = document.querySelector("#upload-title");
 const setupError = document.querySelector("#setup-error");
 const answerInput = document.querySelector("#answer");
@@ -15,8 +16,11 @@ const modelPill = document.querySelector("#model-pill");
 const modelLabel = document.querySelector("#model-label");
 const panelStatus = document.querySelector("#panel-status");
 const messageTemplate = document.querySelector("#message-template");
+const cancelStartButton = document.querySelector("#cancel-start");
+const cancelRunButton = document.querySelector("#cancel-run");
 
 let sessionId = null;
+let activeController = null;
 
 function errorDetail(error) {
   const detail = error?.detail;
@@ -30,6 +34,35 @@ async function request(url, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw payload;
   return payload;
+}
+
+async function requestStream(url, options, onEvent) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw payload;
+  }
+  if (!response.body) throw { detail: "浏览器不支持流式响应。" };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      let event = "message";
+      const dataLines = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        if (line.startsWith("data: ")) dataLines.push(line.slice(6));
+      }
+      if (dataLines.length) onEvent(event, JSON.parse(dataLines.join("\n")));
+    }
+    if (done) break;
+  }
 }
 
 function setLoading(form, isLoading) {
@@ -48,9 +81,31 @@ function addMessage(kind, label, text) {
   message.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+function streamMessage(task, streamedMessages) {
+  if (streamedMessages.has(task)) return streamedMessages.get(task);
+  const labels = {
+    teaching: "针对性讲解 · 流式生成",
+    quiz: "迁移练习 · 流式生成",
+    summary: "学习小结 · 流式生成",
+  };
+  const message = messageTemplate.content.firstElementChild.cloneNode(true);
+  message.classList.add("coach");
+  message.querySelector(".message-meta").textContent = labels[task] || task;
+  timeline.append(message);
+  streamedMessages.set(task, message.querySelector(".message-body"));
+  return streamedMessages.get(task);
+}
+
+function sourceText(sources) {
+  return sources
+    .map((source) => `[${source.source_id}] ${source.text}`)
+    .join("\n\n");
+}
+
 function setProgress(stage, completed = false) {
   const order = ["diagnostic", "teach", "quiz", "assessment", "summary"];
-  const activeIndex = completed ? order.length : order.indexOf(stage);
+  const normalizedStage = stage === "teaching" ? "teach" : stage;
+  const activeIndex = completed ? order.length : order.indexOf(normalizedStage);
   document.querySelectorAll("#progress-list li").forEach((item, index) => {
     item.classList.toggle("done", index < activeIndex || completed);
     item.classList.toggle("active", !completed && index === activeIndex);
@@ -62,10 +117,10 @@ function setProgress(stage, completed = false) {
     assessment: "正在评价掌握程度",
     summary: "学习闭环已完成",
   };
-  panelStatus.textContent = labels[stage] || "学习进行中";
+  panelStatus.textContent = labels[normalizedStage] || "学习进行中";
 }
 
-function showQuestion(data) {
+function showQuestion(data, streamedTasks = new Set()) {
   if (data.stage === "diagnostic") {
     addMessage("coach", "诊断问题", data.question);
     setProgress("diagnostic");
@@ -79,8 +134,15 @@ function showQuestion(data) {
       `${data.feedback}\n\n主要缺口：${data.missing_point}`,
     );
   }
-  if (data.explanation) addMessage("coach", "针对性讲解", data.explanation);
-  addMessage("coach", data.attempts ? "补救练习" : "迁移练习", data.question);
+  if (data.sources?.length && !streamedTasks.has("sources")) {
+    addMessage("assessment", "本轮参考资料", sourceText(data.sources));
+  }
+  if (data.explanation && !streamedTasks.has("teaching")) {
+    addMessage("coach", "针对性讲解", data.explanation);
+  }
+  if (!streamedTasks.has("quiz")) {
+    addMessage("coach", data.attempts ? "补救练习" : "迁移练习", data.question);
+  }
   setProgress("quiz");
 }
 
@@ -109,18 +171,36 @@ startForm.addEventListener("submit", async (event) => {
   const formData = new FormData();
   formData.append("topic", topicInput.value);
   if (imageInput.files[0]) formData.append("image", imageInput.files[0]);
+  if (studyMaterialInput.value.trim()) {
+    formData.append("study_material", studyMaterialInput.value);
+  }
+  activeController = new AbortController();
+  cancelStartButton.hidden = false;
+  cancelStartButton.disabled = false;
+  let finalState = null;
 
   try {
-    const data = await request("/api/sessions", { method: "POST", body: formData });
-    sessionId = data.session_id;
+    await requestStream(
+      "/api/sessions/stream",
+      { method: "POST", body: formData, signal: activeController.signal },
+      (eventName, payload) => {
+        if (eventName === "status") setProgress(payload.task);
+        if (eventName === "state") finalState = payload;
+        if (eventName === "error") throw { detail: payload.message };
+      },
+    );
+    if (!finalState) throw { detail: "模型运行没有返回最终状态。" };
+    sessionId = finalState.session_id;
     setupView.hidden = true;
     sessionView.hidden = false;
-    document.querySelector("#session-topic").textContent = data.topic;
-    showQuestion(data);
+    document.querySelector("#session-topic").textContent = finalState.topic;
+    showQuestion(finalState);
     answerInput.focus();
   } catch (error) {
-    setupError.textContent = errorDetail(error);
+    setupError.textContent = error.name === "AbortError" ? "已停止本次生成。" : errorDetail(error);
   } finally {
+    activeController = null;
+    cancelStartButton.hidden = true;
     setLoading(startForm, false);
   }
 });
@@ -134,23 +214,58 @@ answerForm.addEventListener("submit", async (event) => {
   answerInput.value = "";
   setProgress("assessment");
   setLoading(answerForm, true);
+  activeController = new AbortController();
+  cancelRunButton.hidden = false;
+  cancelRunButton.disabled = false;
+  const streamedMessages = new Map();
+  const streamedTasks = new Set();
+  let finalState = null;
 
   try {
-    const data = await request(`/api/sessions/${sessionId}/answers`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer }),
-    });
-    if (data.status === "completed") showResult(data);
-    else showQuestion(data);
+    await requestStream(
+      `/api/sessions/${sessionId}/answers/stream`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer }),
+        signal: activeController.signal,
+      },
+      (eventName, payload) => {
+        if (eventName === "status") setProgress(payload.task);
+        if (eventName === "token") {
+          streamedTasks.add(payload.task);
+          const body = streamMessage(payload.task, streamedMessages);
+          body.textContent += payload.text;
+          body.parentElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        if (eventName === "sources" && payload.sources?.length) {
+          streamedTasks.add("sources");
+          addMessage("assessment", "本轮参考资料", sourceText(payload.sources));
+        }
+        if (eventName === "state") finalState = payload;
+        if (eventName === "error") throw { detail: payload.message };
+      },
+    );
+    if (!finalState) throw { detail: "模型运行没有返回最终状态。" };
+    if (finalState.status === "completed") showResult(finalState);
+    else showQuestion(finalState, streamedTasks);
   } catch (error) {
-    answerError.textContent = errorDetail(error);
+    answerError.textContent = error.name === "AbortError" ? "已停止本次生成，可以重新提交。" : errorDetail(error);
     answerInput.value = answer;
   } finally {
+    activeController = null;
+    cancelRunButton.hidden = true;
     setLoading(answerForm, false);
     if (!answerCard.hidden) answerInput.focus();
   }
 });
+
+function cancelActiveRun() {
+  activeController?.abort();
+}
+
+cancelStartButton.addEventListener("click", cancelActiveRun);
+cancelRunButton.addEventListener("click", cancelActiveRun);
 
 answerInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -172,6 +287,8 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   sessionView.hidden = true;
   setupView.hidden = false;
   answerInput.value = "";
+  activeController?.abort();
+  activeController = null;
   document.querySelectorAll("#progress-list li").forEach((item) => {
     item.classList.remove("active", "done");
   });

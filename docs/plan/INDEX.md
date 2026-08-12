@@ -14,6 +14,8 @@
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [LCEL 生产级组合 Follow-up](./lcel-runnable-task-layer-follow-up-production-chain/) | [implementation](./lcel-runnable-task-layer-follow-up-production-chain/implementation.md) / [checklist](./lcel-runnable-task-layer-follow-up-production-chain/implementation-checklist.md) | 1.0 | 2026-08-12 |
+| ↳ 单元测试 | [test-plan](./lcel-runnable-task-layer-follow-up-production-chain/unit-test-plan.md) / [checklist](./lcel-runnable-task-layer-follow-up-production-chain/unit-test-plan-checklist.md) | 1.0 | 2026-08-12 |
 | [LCEL Runnable 任务层](./lcel-runnable-task-layer/) | [implementation](./lcel-runnable-task-layer/implementation.md) / [checklist](./lcel-runnable-task-layer/implementation-checklist.md) | 1.0 | 2026-08-12 |
 | ↳ 单元测试 | [test-plan](./lcel-runnable-task-layer/unit-test-plan.md) / [checklist](./lcel-runnable-task-layer/unit-test-plan-checklist.md) | 1.0 | 2026-08-12 |
 
