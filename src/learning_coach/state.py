@@ -5,6 +5,11 @@ class LearningState(TypedDict, total=False):
     """The explicit state shared by every node in the learning workflow."""
 
     topic: str
+    learning_goal: str
+    mastery_level: int
+    recent_errors: list[str]
+    context_summary: str
+    context_report: dict[str, Any]
     diagnostic_images: list[dict[str, Any]]
     study_material: str
     diagnostic_question: str

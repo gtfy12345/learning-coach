@@ -1,0 +1,54 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: context-engineering-middleware
+  baseBranch: main
+  branch: context-engineering-middleware
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - context-engineering-middleware
+      - Context Engineering 与 Middleware
+      - 动态教学上下文
+    keywords:
+      - Runtime Context dynamic prompt tools model
+      - mastery recent errors context summary
+      - model call tool call budget middleware
+    relatedSpecs:
+      - ../../spec/context-engineering-middleware-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/context-engineering-middleware-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../lcel-runnable-task-layer-follow-up-production-chain/implementation.md
+        - ../../spec/lcel-production-chain-design.md
+      discovery:
+        packages:
+          - src/learning_coach/context.py
+          - src/learning_coach/middleware.py
+          - src/learning_coach/state.py
+          - src/learning_coach/model.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/cli.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests
+        apiNames:
+          - LearningRuntimeContext
+          - LearningContextSettings
+          - LearningCoachRunnables
+          - LearningSessionService
+          - build_learning_graph
+        uiRoutes:
+          - /
+          - /api/sessions
+          - /api/sessions/stream
+          - /api/sessions/{session_id}/answers
+          - /api/sessions/{session_id}/answers/stream

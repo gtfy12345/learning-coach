@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-13](2026-08-13.md) | `feat(context): runtime context 与学习状态` | #feat |
 | [2026-08-12](2026-08-12.md) | `feat(coach): add production LCEL streaming and RAG` | #feat |
 | [2026-08-12](2026-08-12.md) | `feat(coach): add reusable LCEL task layer` | #feat |
 | [2026-08-10](2026-08-10.md) | `feat(coach): add multi-model multimodal web workflow` | #feat |

@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [Context Engineering 与 Middleware](./context-engineering-middleware/) | [implementation](./context-engineering-middleware/implementation.md) / [checklist](./context-engineering-middleware/implementation-checklist.md) | 1.0 | 2026-08-13 |
+| ↳ 单元测试 | [test-plan](./context-engineering-middleware/unit-test-plan.md) / [checklist](./context-engineering-middleware/unit-test-plan-checklist.md) | 1.0 | 2026-08-13 |
 
 ## 2 已完成（Completed）
 
