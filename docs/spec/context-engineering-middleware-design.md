@@ -1,7 +1,7 @@
 # Context Engineering 与 Middleware 设计文档
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-13
 
 ## 1 概述

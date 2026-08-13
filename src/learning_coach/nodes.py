@@ -91,28 +91,37 @@ class LearningCoachNodes:
             "context_summary": state.get("context_summary", ""),
         }
         self._write_status("teaching", "started")
-        teaching = self.runnables.teach(task_input, learning_runtime)
-        sources: list[Any] = list(teaching.sources)
-        if sources:
-            self._write_event(
-                {
-                    "event": "sources",
-                    "task": "teaching",
-                    "sources": [source.model_dump() for source in sources],
-                }
-            )
-        self._write_token("teaching", teaching.text)
+        text_parts: list[str] = []
+        sources: list[Any] = []
+        context_report: Any = None
+        for teaching in self.runnables.teach_stream(
+            task_input, learning_runtime
+        ):
+            if teaching.sources and not sources:
+                sources = list(teaching.sources)
+                self._write_event(
+                    {
+                        "event": "sources",
+                        "task": "teaching",
+                        "sources": [source.model_dump() for source in sources],
+                    }
+                )
+            if teaching.context_report is not None and context_report is None:
+                context_report = teaching.context_report
+            if teaching.text:
+                text_parts.append(teaching.text)
+                self._write_token("teaching", teaching.text)
         self._write_status("teaching", "completed")
         result: dict[str, Any] = {
-            "explanation": teaching.text,
+            "explanation": "".join(text_parts),
             "explanation_sources": [
                 source.model_dump() for source in sources
             ],
             "context_summary": state.get("context_summary")
             or build_context_summary(state, learning_runtime),
         }
-        if teaching.context_report is not None:
-            result["context_report"] = teaching.context_report.model_dump()
+        if context_report is not None:
+            result["context_report"] = context_report.model_dump()
         return result
 
     def make_quiz(self, state: LearningState) -> dict[str, str]:

@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
@@ -179,3 +180,31 @@ def test_teaching_context_disables_tools_without_relevant_state_or_budget() -> N
     assert context.available_tools == []
     assert context.mastery_band == "mastered"
     assert context.prefer_advanced_model is False
+
+
+def test_public_docs_describe_context_engineering_configuration() -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+
+    for term in (
+        "LearningRuntimeContext",
+        "dynamic_prompt",
+        "wrap_model_call",
+        "ModelCallLimitMiddleware",
+        "ToolCallLimitMiddleware",
+        "ADVANCED_CHAT_MODEL_ID",
+        "CONTEXT_MODEL_CALL_LIMIT",
+        "CONTEXT_TOOL_CALL_LIMIT",
+        "最近错误",
+        "确定性摘要",
+    ):
+        assert term in readme
+    for setting in (
+        "ADVANCED_CHAT_MODEL_ID",
+        "CONTEXT_MODEL_CALL_LIMIT=3",
+        "CONTEXT_TOOL_CALL_LIMIT=2",
+    ):
+        assert setting in env_example
+    assert "不支持 Tool Calling" in readme
+    assert "LCEL 兼容路径" in readme

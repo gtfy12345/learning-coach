@@ -1,7 +1,7 @@
 # Context Engineering 与 Middleware 实施 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-13
 
 **关联计划**: [implementation.md](./implementation.md)
@@ -23,5 +23,5 @@
 
 ## Phase 4: 文档、验证与交付
 
-- [ ] 4.1 同步配置、README 与公开边界
-- [ ] 4.2 完成回归验证、Git 交付与公众号文章
+- [x] 4.1 同步配置、README 与公开边界
+- [x] 4.2 完成回归验证、Git 交付与公众号文章

@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
@@ -16,9 +16,9 @@ from langchain_core.runnables import (
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
-from learning_coach.model import LearningCoachModels
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.middleware import ContextEngineeredTeaching
+from learning_coach.model import LearningCoachModels
 from learning_coach.retrieval import retrieve_study_sources
 from learning_coach.schemas import (
     Assessment,
@@ -343,6 +343,23 @@ class LearningCoachRunnables:
             )
         return self.teaching_engine.invoke(task_input, runtime)
 
+    def teach_stream(
+        self,
+        task_input: TaskInput,
+        runtime: LearningRuntimeContext,
+    ) -> Iterator[GroundedTeaching]:
+        """Stream context-engineered teaching without losing LCEL chunks."""
+
+        if self.teaching_engine is None:
+            for chunk in self.teaching.stream(task_input):
+                yield (
+                    chunk
+                    if isinstance(chunk, GroundedTeaching)
+                    else GroundedTeaching.model_validate(chunk)
+                )
+            return
+        yield from self.teaching_engine.stream(task_input, runtime)
+
     def task(self, name: TaskName | str) -> Runnable[Any, Any]:
         tasks: dict[str, Runnable[Any, Any]] = {
             "diagnostic": self.diagnostic,
@@ -442,6 +459,7 @@ class LearningCoachRunnables:
             teaching_engine=ContextEngineeredTeaching(
                 primary_model=models.chat,
                 advanced_model=models.advanced_chat,
+                agent_fallback_model=models.chat_fallback,
                 fallback_runnable=teaching_task,
             ),
         )

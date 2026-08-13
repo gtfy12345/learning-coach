@@ -198,6 +198,11 @@ class ToolCallingTeachingModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
+class FailingToolModel(ToolCallingTeachingModel):
+    def _generate(self, messages: Any, **kwargs: Any) -> ChatResult:
+        raise RuntimeError("primary agent model failed")
+
+
 def test_context_engineered_agent_executes_tools_and_reports_budgets() -> None:
     model = ToolCallingTeachingModel()
     fallback = RunnableLambda(
@@ -240,6 +245,48 @@ def test_context_engineered_agent_executes_tools_and_reports_budgets() -> None:
             "search_study_material",
             "inspect_learning_progress",
         ],
+        used_tools=["search_study_material"],
+        model_call_limit=3,
+        tool_call_limit=2,
+        model_calls=2,
+        tool_calls=1,
+        summary_applied=True,
+    )
+
+
+def test_context_engineered_agent_streams_text_and_finishes_with_report() -> None:
+    model = ToolCallingTeachingModel()
+    engine = ContextEngineeredTeaching(
+        primary_model=model,
+        fallback_runnable=RunnableLambda(
+            lambda values: GroundedTeaching(text="LCEL fallback")
+        ),
+    )
+    task = {
+        "topic": "LangGraph 条件边",
+        "mastery_level": 55,
+        "study_material": "条件边读取结构化 State。",
+    }
+
+    chunks = list(
+        engine.stream(
+            task,
+            LearningRuntimeContext(
+                learning_goal="独立实现有界条件路由",
+                model_call_limit=3,
+                tool_call_limit=2,
+            ),
+        )
+    )
+
+    assert "".join(chunk.text for chunk in chunks) == (
+        "条件边应读取 State，并显式限制循环次数。"
+    )
+    assert chunks[-1].sources[0].source_id == "material-1#chunk-1"
+    assert chunks[-1].context_report == ContextReport(
+        mode="agent",
+        model_tier="primary",
+        available_tools=["search_study_material"],
         used_tools=["search_study_material"],
         model_call_limit=3,
         tool_call_limit=2,
@@ -296,3 +343,26 @@ def test_context_engineered_agent_stops_when_tool_budget_is_exceeded() -> None:
                 tool_call_limit=1,
             ),
         )
+
+
+def test_context_engineered_agent_uses_existing_model_fallback() -> None:
+    fallback_model = ToolCallingTeachingModel()
+    engine = ContextEngineeredTeaching(
+        primary_model=FailingToolModel(),
+        agent_fallback_model=fallback_model,
+        fallback_runnable=RunnableLambda(
+            lambda values: GroundedTeaching(text="LCEL fallback", sources=[])
+        ),
+    )
+
+    result = engine.invoke(
+        {"topic": "LangGraph", "diagnostic_answer": "错误"},
+        LearningRuntimeContext(
+            learning_goal="掌握条件边",
+            model_call_limit=3,
+            tool_call_limit=1,
+        ),
+    )
+
+    assert result.text == "条件边应读取 State，并显式限制循环次数。"
+    assert fallback_model._calls == 1

@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层与 LCEL 任务层扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层与 Context Engineering 扩展：
 
 ```mermaid
 flowchart LR
@@ -36,6 +36,10 @@ flowchart LR
 - 基于用户粘贴文本的确定性内存检索、带来源讲解和 Runnable 图导出
 - Runnable 的同步、异步、批处理与流式执行，以及 Web SSE、取消和超时
 - 默认关闭的 LangSmith 任务追踪标签与安全元数据
+- `LearningRuntimeContext` 中一次会话不可变的学习目标与模型/工具预算
+- 根据掌握度、最近错误和资料动态生成 Prompt、选择工具与可选高级模型
+- `dynamic_prompt`、`wrap_model_call`、`ModelCallLimitMiddleware` 与 `ToolCallLimitMiddleware`
+- 不额外调用模型的确定性摘要，以及可展示、无敏感正文的 Context Report
 - LangGraph State、Node、Edge 和 Conditional Edge
 - 可终止的补救循环
 - `interrupt()` 人工输入
@@ -82,6 +86,13 @@ CHAT_MODEL_ID=codex_cli:default
 PYTHONPATH=src python -m learning_coach "LangGraph Reducer"
 ```
 
+可以显式说明本次希望达到的学习目标：
+
+```bash
+PYTHONPATH=src python -m learning_coach "LangGraph Reducer" \
+  --goal "能够独立设计有终止条件的 Reducer 合并流程"
+```
+
 不传主题也可以启动，程序会在命令行中询问：
 
 ```bash
@@ -105,6 +116,7 @@ PYTHONPATH=src python -m learning_coach web
 页面已经接通以下功能：
 
 - 输入学习主题并生成结构化诊断题
+- 输入可选学习目标，让讲解根据掌握度和最近错误动态调整
 - 上传一张本地图片参与诊断
 - 粘贴一段可选学习资料，在讲解阶段检索相关片段并显示来源
 - 提交诊断回答，查看针对性讲解和迁移练习
@@ -113,6 +125,7 @@ PYTHONPATH=src python -m learning_coach web
 - 完成后展示最终得分与学习小结
 - 通过 SSE 增量展示讲解、练习和小结，并可停止当前生成
 - 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
+- 显示当前掌握度、学习摘要以及本轮模型/工具预算使用情况
 
 当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
 
@@ -121,10 +134,10 @@ PYTHONPATH=src python -m learning_coach web
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/health` | 服务健康检查 |
-| `GET /api/config` | 返回脱敏后的主/备用模型配置和图片能力 |
-| `POST /api/sessions` | 使用主题和可选图片创建学习会话 |
+| `GET /api/config` | 返回脱敏后的主/高级/备用模型配置、图片能力和预算上限 |
+| `POST /api/sessions` | 使用主题、可选学习目标、图片和纯文本资料创建学习会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
-| `POST /api/sessions/stream` | 使用主题、可选图片和可选纯文本资料流式创建会话 |
+| `POST /api/sessions/stream` | 使用主题、可选学习目标、图片和纯文本资料流式创建会话 |
 | `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、state 和 done 事件 |
 
 两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
@@ -154,6 +167,29 @@ ASSESSMENT_FALLBACK_MODEL_ID=google_genai:gemini-2.5-flash-lite
 ```
 
 备用模型是可选配置。LCEL 会对完整的 `Prompt | Model | Parser` 任务使用一次 `with_fallbacks()`：Provider 调用、CLI 调用或输出验证失败都可以触发备用链；主备均失败时保留主链异常，不会无限重试。图片会原样传给备用模型，不会为了降级而静默删除。
+
+### Context Engineering 与 Middleware
+
+第 4 阶段把“每次调用给模型什么上下文”变成了显式策略。`LearningRuntimeContext` 保存本次会话不可变的学习目标、目标掌握度和调用预算；LangGraph State 保存会随学习变化的掌握度、最近三个错误和确定性摘要。两者不会互相覆盖：预算由服务端配置决定，模型输出不能把预算写大。
+
+讲解任务根据这些上下文动态决策：
+
+- `dynamic_prompt` 组合学习目标、当前得分、最近错误、诊断重点和摘要。
+- `wrap_model_call` 只开放当前需要的只读工具：有学习资料时开放 `search_study_material`，已经有诊断或反馈时开放 `inspect_learning_progress`。
+- 掌握度低于 60，或最近错误达到两个时，可以切换到可选的 `ADVANCED_CHAT_MODEL_ID`；未配置则继续使用主模型。
+- `ModelCallLimitMiddleware` 和 `ToolCallLimitMiddleware` 提供硬上限，默认每次讲解最多 3 次模型调用和 2 次工具调用。
+- 摘要由确定性规则生成，最多 600 字，不额外消耗模型预算。
+
+```dotenv
+# 可选：只在学习者确实卡住时用于讲解
+ADVANCED_CHAT_MODEL_ID=openai:gpt-5.4
+
+# 服务端硬上限；Web 客户端不能调高
+CONTEXT_MODEL_CALL_LIMIT=3
+CONTEXT_TOOL_CALL_LIMIT=2
+```
+
+动态工具只读取当前会话内存中的学习资料和进展，不访问文件、网络、数据库或环境变量。官方 CLI 适配器当前明确不支持 Tool Calling，因此使用相同目标、掌握度、最近错误和摘要的 LCEL 兼容路径；这条路径不会伪造工具调用，Context Report 会标记为 `lcel`。
 
 也可以把模型切换到 Google Gemini：
 
@@ -330,8 +366,10 @@ learning-coach/
 │       ├── auth.py
 │       ├── cli.py
 │       ├── cli_models.py
+│       ├── context.py
 │       ├── graph.py
 │       ├── media.py
+│       ├── middleware.py
 │       ├── model.py
 │       ├── nodes.py
 │       ├── retrieval.py
@@ -347,15 +385,19 @@ learning-coach/
     ├── test_auth.py
     ├── test_cli.py
     ├── test_cli_models.py
+    ├── test_context.py
     ├── test_graph.py
     ├── test_media.py
+    ├── test_middleware.py
     ├── test_model.py
     ├── test_retrieval.py
     ├── test_routing.py
     └── test_web.py
 ```
 
-- `state.py`：学习过程、结构化诊断信息和图片 content blocks 保存哪些数据。
+- `state.py`：学习过程、掌握度、最近错误、摘要和结构化诊断信息保存哪些数据。
+- `context.py`：定义 Runtime Context、预算校验、掌握度分层、最近错误和确定性摘要。
+- `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
@@ -379,7 +421,7 @@ learning-coach/
 | 2 | 多模型、多模态与结构化输出 | 主流 API、OpenAI-compatible 服务及登录适配 |
 | 2.5 | Web MVP | FastAPI、本地学习页面、图片上传和浏览器会话恢复 |
 | 3 | Runnable 与 LCEL | 高级组合、统一执行接口、内存 RAG、SSE、超时取消和追踪 |
-| 4 | Context Engineering 与 Middleware | 动态组织教学上下文、工具和预算 |
+| 4 | Context Engineering 与 Middleware | Runtime Context、动态 Prompt/Tools/Model、摘要和预算 |
 | 5 | 多模态学习资料摄取 | 读取文档、网页、图片与代码并保留来源 |
 | 6 | 自校正 Hybrid RAG | 检索、重排、查询改写与证据质量判断 |
 | 7 | GraphRAG 与知识前置图 | 生成概念图谱并定位前置知识缺口 |
@@ -398,11 +440,14 @@ learning-coach/
 - 评分由模型完成，不能直接等同于真实掌握程度。
 - model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
 - LCEL fallback 只在任务抛出异常时切换一次，不做负载均衡，也不会根据答案质量自动换模型。
+- 高级教学模型只根据显式掌握度和最近错误切换；它不是自动质量评审，也不会改变评价模型。
+- CLI Provider 不支持 Tool Calling 时走 LCEL 兼容路径；只有 profile 明确声明工具能力的 `BaseChatModel` 才进入局部 Agent 循环。
+- Context Report 记录模式、工具名和调用计数，不保存资料正文或学习者回答；掌握度仍来自模型评价，不能视为客观测量。
 - 当前 Retriever 是确定性词法匹配，不是语义向量检索；没有重排、查询改写或证据质量判断。
 - SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。
-- 外层是确定性 Workflow；工具接入后，才会让 Agent 在局部范围内自主选择动作。
+- 外层仍是确定性 Workflow；Agent 只在讲解任务内部从两个只读工具中选择，并受到模型/工具预算和 LangGraph 补救次数的双重上限。
 
 ## 参与项目
 

@@ -441,3 +441,31 @@ def test_context_engineered_teach_uses_runtime_goal_and_lcel_compatibility() -> 
     assert "能够选择正确的 Reducer" in teaching_message
     assert "55" in teaching_message
     assert "Reducer 类型约束" in teaching_message
+
+
+def test_context_engineered_lcel_path_preserves_incremental_streaming() -> None:
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(StreamingChatModel())
+    )
+    task_input = {
+        "topic": "LCEL",
+        "diagnostic_focus": "Runnable",
+        "diagnostic_difficulty": "foundation",
+        "diagnostic_answer": "统一接口",
+        "feedback": "暂无",
+        "missing_point": "暂无",
+        "study_material": "LCEL Runnable 统一 stream 接口。",
+        "mastery_level": 70,
+        "recent_errors": [],
+    }
+
+    chunks = list(
+        tasks.teach_stream(
+            task_input,
+            LearningRuntimeContext(learning_goal="掌握 Runnable 流式接口"),
+        )
+    )
+
+    assert [chunk.text for chunk in chunks if chunk.text] == ["第一段", "第二段"]
+    assert any(chunk.sources for chunk in chunks)
+    assert sum(chunk.context_report is not None for chunk in chunks) == 1

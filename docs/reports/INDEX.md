@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-13](./2026-08-13-context-engineering-middleware-assessment.md) | Context Engineering 与 Middleware 交付复盘 | #assessment |
 | [2026-08-12](./2026-08-12-lcel-production-chain-assessment.md) | LCEL 生产级组合交付复盘 | #assessment |
 | [2026-08-12](./2026-08-12-lcel-runnable-task-layer-assessment.md) | LCEL Runnable 任务层交付复盘 | #assessment |
 | [2026-08-10](./2026-08-10-web-mvp-assessment.md) | Web MVP 交付复盘 | #assessment |

@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-13](2026-08-13.md) | `feat(context): 完成上下文工程交付` | #feat |
 | [2026-08-13](2026-08-13.md) | `feat(context): 接入学习流程与 web` | #feat |
 | [2026-08-13](2026-08-13.md) | `feat(context): 动态教学 middleware` | #feat |
 | [2026-08-13](2026-08-13.md) | `feat(context): runtime context 与学习状态` | #feat |

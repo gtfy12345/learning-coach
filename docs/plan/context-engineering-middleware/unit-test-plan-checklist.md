@@ -1,7 +1,7 @@
 # Context Engineering 与 Middleware 单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-13
 
 **关联计划**: [unit-test-plan.md](./unit-test-plan.md)
@@ -23,5 +23,5 @@
 
 ## Phase 4: 文档与完整回归
 
-- [ ] 4.1 文档和配置
-- [ ] 4.2 完整验证与 DOCX 校验
+- [x] 4.1 文档和配置
+- [x] 4.2 完整验证与 DOCX 校验
