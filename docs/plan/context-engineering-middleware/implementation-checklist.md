@@ -13,8 +13,8 @@
 
 ## Phase 2: 动态 Middleware 讲解任务
 
-- [ ] 2.1 实现动态 Prompt、Tools 与 Model Middleware
-- [ ] 2.2 集成有界讲解 Agent 与兼容降级
+- [x] 2.1 实现动态 Prompt、Tools 与 Model Middleware
+- [x] 2.2 集成有界讲解 Agent 与兼容降级
 
 ## Phase 3: LangGraph、Web 与 CLI 集成
 

@@ -17,6 +17,8 @@ from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from learning_coach.model import LearningCoachModels
+from learning_coach.context import LearningRuntimeContext
+from learning_coach.middleware import ContextEngineeredTeaching
 from learning_coach.retrieval import retrieve_study_sources
 from learning_coach.schemas import (
     Assessment,
@@ -40,7 +42,8 @@ TEACHING_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "你是技术学习教练。针对薄弱点讲解，并使用一个具体代码场景。",
+            "你是技术学习教练。针对薄弱点讲解，并使用一个具体代码场景。"
+            "结合本次学习目标、掌握度、最近错误和学习摘要调整讲解深度。",
         ),
         (
             "user",
@@ -50,6 +53,11 @@ TEACHING_PROMPT = ChatPromptTemplate.from_messages(
 诊断回答：{diagnostic_answer}
 上次反馈：{feedback}
 尚未掌握：{missing_point}
+学习目标：{learning_goal}
+当前掌握度：{mastery_level}/100
+最近错误：{recent_errors}
+学习摘要：
+{context_summary}
 参考资料：
 {study_context}
 请控制在 300 字内，不要只重复定义。""",
@@ -175,6 +183,13 @@ def _format_study_context(values: TaskInput) -> str:
 def _teaching_prompt_input(values: TaskInput) -> TaskInput:
     task = dict(values["task"])
     task["study_context"] = values["study_context"]
+    task.setdefault("learning_goal", f"掌握主题：{task.get('topic', '')}")
+    task.setdefault("mastery_level", 0)
+    errors = task.get("recent_errors", "暂无")
+    if isinstance(errors, list):
+        errors = "；".join(str(error) for error in errors) or "暂无"
+    task["recent_errors"] = errors
+    task.setdefault("context_summary", "暂无")
     return task
 
 
@@ -310,6 +325,23 @@ class LearningCoachRunnables:
     quiz: Runnable[TaskInput, str]
     assessment: Runnable[TaskInput, Assessment]
     summary: Runnable[TaskInput, str]
+    teaching_engine: ContextEngineeredTeaching | None = None
+
+    def teach(
+        self,
+        task_input: TaskInput,
+        runtime: LearningRuntimeContext,
+    ) -> GroundedTeaching:
+        """Run context-engineered teaching while preserving the legacy Runnable."""
+
+        if self.teaching_engine is None:
+            result = self.teaching.invoke(task_input)
+            return (
+                result
+                if isinstance(result, GroundedTeaching)
+                else GroundedTeaching.model_validate(result)
+            )
+        return self.teaching_engine.invoke(task_input, runtime)
 
     def task(self, name: TaskName | str) -> Runnable[Any, Any]:
         tasks: dict[str, Runnable[Any, Any]] = {
@@ -384,15 +416,16 @@ class LearningCoachRunnables:
             else None
         )
 
+        teaching_task = _configured_task(
+            "teaching",
+            _with_optional_fallback(teaching_primary, teaching_fallback),
+        )
         return cls(
             diagnostic=_configured_task(
                 "diagnostic",
                 _with_optional_fallback(diagnostic_primary, diagnostic_fallback),
             ),
-            teaching=_configured_task(
-                "teaching",
-                _with_optional_fallback(teaching_primary, teaching_fallback),
-            ),
+            teaching=teaching_task,
             quiz=_configured_task(
                 "quiz", _with_optional_fallback(quiz_primary, quiz_fallback)
             ),
@@ -405,5 +438,10 @@ class LearningCoachRunnables:
             summary=_configured_task(
                 "summary",
                 _with_optional_fallback(summary_primary, summary_fallback),
+            ),
+            teaching_engine=ContextEngineeredTeaching(
+                primary_model=models.chat,
+                advanced_model=models.advanced_chat,
+                fallback_runnable=teaching_task,
             ),
         )

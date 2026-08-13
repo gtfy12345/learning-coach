@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.runnables.base import Runnable
 
 from learning_coach.model import LearningCoachModels
+from learning_coach.context import LearningRuntimeContext
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import Assessment, Diagnostic, GroundedTeaching
 
@@ -405,3 +406,38 @@ def test_task_observability_config_uses_safe_stable_metadata() -> None:
         assert "api_key" not in serialized
         assert "study_material" not in serialized
         assert "answer" not in serialized
+
+
+def test_context_engineered_teach_uses_runtime_goal_and_lcel_compatibility() -> None:
+    model = FakeChatModel()
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(model)
+    )
+
+    result = tasks.teach(
+        {
+            "topic": "LangGraph Reducer",
+            "diagnostic_focus": "Reducer 合并语义",
+            "diagnostic_difficulty": "application",
+            "diagnostic_answer": "后写入会覆盖。",
+            "feedback": "需要解释列表合并。",
+            "missing_point": "Reducer 类型约束",
+            "mastery_level": 55,
+            "recent_errors": ["Reducer 类型约束"],
+            "study_material": "Reducer 决定并行 State 字段如何合并。",
+        },
+        LearningRuntimeContext(
+            learning_goal="能够选择正确的 Reducer",
+            model_call_limit=3,
+            tool_call_limit=2,
+        ),
+    )
+
+    assert result.text == "Reducer 决定并行更新如何合并。"
+    assert result.context_report is not None
+    assert result.context_report.mode == "lcel"
+    assert result.context_report.model_calls == 1
+    teaching_message = model.text_messages[-1][1].content
+    assert "能够选择正确的 Reducer" in teaching_message
+    assert "55" in teaching_message
+    assert "Reducer 类型约束" in teaching_message

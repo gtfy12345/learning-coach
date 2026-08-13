@@ -48,6 +48,21 @@ def test_settings_support_separate_chat_and_assessment_models() -> None:
     assert settings.image_input_policy == "allow"
 
 
+def test_settings_support_optional_advanced_teaching_model() -> None:
+    configured = ModelSettings.from_environ(
+        {
+            "CHAT_MODEL_ID": "openai:gpt-5-mini",
+            "ADVANCED_CHAT_MODEL_ID": "openai:gpt-5.4",
+        }
+    )
+    defaulted = ModelSettings.from_environ(
+        {"CHAT_MODEL_ID": "openai:gpt-5-mini"}
+    )
+
+    assert configured.advanced_chat_model_id == "openai:gpt-5.4"
+    assert defaulted.advanced_chat_model_id is None
+
+
 def test_settings_support_fallback_inheritance_and_role_override() -> None:
     inherited = ModelSettings.from_environ(
         {
@@ -165,6 +180,21 @@ def test_model_suite_negotiates_each_role_independently() -> None:
     assert suite.accepts_images is True
     assert chat.structured_calls[0][1] == "function_calling"
     assert assessment.structured_calls[0][1] == "json_schema"
+
+
+def test_model_suite_carries_optional_advanced_teaching_model() -> None:
+    chat = FakeModel(
+        {"structured_output": True, "tool_calling": True, "image_inputs": True}
+    )
+    advanced = FakeModel(
+        {"structured_output": True, "tool_calling": True, "image_inputs": True}
+    )
+
+    suite = LearningCoachModels.from_models(
+        chat, advanced_chat_model=advanced
+    )
+
+    assert suite.advanced_chat is advanced
 
 
 def test_model_suite_negotiates_fallback_roles_independently() -> None:

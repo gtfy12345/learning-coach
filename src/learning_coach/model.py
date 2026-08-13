@@ -28,6 +28,7 @@ class ModelSettings:
 
     chat_model_id: str
     assessment_model_id: str
+    advanced_chat_model_id: str | None = None
     chat_fallback_model_id: str | None = None
     assessment_fallback_model_id: str | None = None
     structured_output_strategy: StructuredOutputStrategy = "auto"
@@ -52,6 +53,9 @@ class ModelSettings:
 
         chat_fallback_model_id = (
             environ.get("CHAT_FALLBACK_MODEL_ID", "").strip() or None
+        )
+        advanced_chat_model_id = (
+            environ.get("ADVANCED_CHAT_MODEL_ID", "").strip() or None
         )
         assessment_fallback_model_id = (
             environ.get("ASSESSMENT_FALLBACK_MODEL_ID", "").strip()
@@ -78,6 +82,7 @@ class ModelSettings:
         return cls(
             chat_model_id=chat_model_id,
             assessment_model_id=assessment_model_id,
+            advanced_chat_model_id=advanced_chat_model_id,
             chat_fallback_model_id=chat_fallback_model_id,
             assessment_fallback_model_id=assessment_fallback_model_id,
             structured_output_strategy=cast(StructuredOutputStrategy, strategy),
@@ -178,6 +183,7 @@ class LearningCoachModels:
     diagnostic_method: StructuredOutputMethod
     assessment_method: StructuredOutputMethod
     accepts_images: bool
+    advanced_chat: Any | None = None
     chat_fallback: Any | None = None
     diagnostic_fallback: Any | None = None
     assessment_fallback: Any | None = None
@@ -190,6 +196,7 @@ class LearningCoachModels:
         chat_model: Any,
         assessment_model: Any | None = None,
         *,
+        advanced_chat_model: Any | None = None,
         chat_fallback_model: Any | None = None,
         assessment_fallback_model: Any | None = None,
         structured_output_strategy: StructuredOutputStrategy = "auto",
@@ -227,6 +234,7 @@ class LearningCoachModels:
             accepts_images=image_inputs_enabled(
                 chat_capabilities, image_input_policy
             ),
+            advanced_chat=advanced_chat_model,
             chat_fallback=chat_fallback_model,
             diagnostic_fallback=diagnostic_fallback,
             assessment_fallback=assessment_fallback,
@@ -273,6 +281,7 @@ def create_model_suite() -> LearningCoachModels:
 
     chat_model = model_for(settings.chat_model_id)
     assessment_model = model_for(settings.assessment_model_id)
+    advanced_chat_model = model_for(settings.advanced_chat_model_id)
     chat_fallback_model = model_for(settings.chat_fallback_model_id)
     assessment_fallback_model = model_for(settings.assessment_fallback_model_id)
     assert chat_model is not None
@@ -280,6 +289,7 @@ def create_model_suite() -> LearningCoachModels:
     return LearningCoachModels.from_models(
         chat_model,
         assessment_model,
+        advanced_chat_model=advanced_chat_model,
         chat_fallback_model=chat_fallback_model,
         assessment_fallback_model=assessment_fallback_model,
         structured_output_strategy=settings.structured_output_strategy,

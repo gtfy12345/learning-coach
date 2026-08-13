@@ -13,8 +13,8 @@
 
 ## Phase 2: Middleware 与 Agent 测试
 
-- [ ] 2.1 动态 Prompt、工具与模型
-- [ ] 2.2 Agent、预算和 CLI 降级
+- [x] 2.1 动态 Prompt、工具与模型
+- [x] 2.2 Agent、预算和 CLI 降级
 
 ## Phase 3: LangGraph、Web 与 CLI 测试
 

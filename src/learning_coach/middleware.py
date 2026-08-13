@@ -1,0 +1,350 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelCallLimitMiddleware,
+    ModelRequest,
+    ModelResponse,
+    ToolCallLimitMiddleware,
+    dynamic_prompt,
+    wrap_model_call,
+)
+from langchain.agents import create_agent
+from langchain.tools import BaseTool, ToolRuntime, tool
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import Runnable
+
+from learning_coach.context import (
+    LearningRuntimeContext,
+    TeachingContext,
+    build_teaching_context,
+)
+from learning_coach.retrieval import retrieve_study_sources
+from learning_coach.schemas import ContextReport, GroundedTeaching, StudySource
+
+
+@dataclass(frozen=True)
+class TeachingAgentRuntime:
+    """Context visible to teaching middleware and read-only tools."""
+
+    learning: LearningRuntimeContext
+    teaching: TeachingContext
+    task: dict[str, Any]
+
+
+@tool
+def search_study_material(
+    query: str,
+    runtime: ToolRuntime[TeachingAgentRuntime],
+) -> str:
+    """Search the current session's pasted study material for relevant evidence."""
+
+    sources = search_runtime_material(runtime.context, query)
+    if not sources:
+        return "没有找到相关资料片段。"
+    return "\n\n".join(
+        f"[{source['source_id']}] {source['text']}" for source in sources
+    )
+
+
+@tool
+def inspect_learning_progress(
+    runtime: ToolRuntime[TeachingAgentRuntime],
+) -> str:
+    """Inspect current mastery, recent errors, learning goal and progress summary."""
+
+    return runtime.context.teaching.context_summary
+
+
+_TOOLS: dict[str, BaseTool] = {
+    search_study_material.name: search_study_material,
+    inspect_learning_progress.name: inspect_learning_progress,
+}
+
+
+def select_teaching_tools(runtime: TeachingAgentRuntime) -> list[BaseTool]:
+    """Expose only tools useful to the current learning state and budget."""
+
+    return [
+        _TOOLS[name]
+        for name in runtime.teaching.available_tools
+        if name in _TOOLS
+    ]
+
+
+def choose_teaching_model(
+    runtime: TeachingAgentRuntime,
+    primary_model: Any,
+    advanced_model: Any | None,
+) -> Any:
+    """Prefer an optional stronger teaching model for struggling learners."""
+
+    if runtime.teaching.prefer_advanced_model and advanced_model is not None:
+        return advanced_model
+    return primary_model
+
+
+def teaching_system_prompt(runtime: TeachingAgentRuntime) -> str:
+    """Build a stable system prompt from runtime intent and progress state."""
+
+    context = runtime.teaching
+    errors = "；".join(context.recent_errors) or "暂无已确认错误"
+    tools = "、".join(context.available_tools) or "无工具；直接完成讲解"
+    return f"""你是技术学习教练。请围绕学习目标和薄弱点完成一次针对性讲解。
+学习目标：{context.learning_goal}
+当前掌握度：{context.mastery_level}/100，层级：{context.mastery_band}
+最近错误：{errors}
+可用工具：{tools}
+运行预算：最多 {context.model_call_limit} 次模型调用，最多 {context.tool_call_limit} 次工具调用。
+仅在确有必要时调用工具；不得重复检索相同问题。最终讲解控制在 300 字内，使用一个具体代码场景，不要只重复定义，也不要声称使用了未调用的工具。"""
+
+
+def _runtime(request: ModelRequest[Any]) -> TeachingAgentRuntime:
+    runtime = getattr(request.runtime, "context", None)
+    if not isinstance(runtime, TeachingAgentRuntime):
+        raise RuntimeError("讲解 Agent 缺少有效的 TeachingAgentRuntime。")
+    return runtime
+
+
+@dynamic_prompt
+def LearningCoachDynamicPrompt(request: ModelRequest[Any]) -> str:
+    return teaching_system_prompt(_runtime(request))
+
+
+def _context_router(
+    *,
+    primary_model: Any,
+    advanced_model: Any | None,
+) -> AgentMiddleware[Any, TeachingAgentRuntime]:
+    @wrap_model_call(name="LearningCoachContextRouter")
+    def route(
+        request: ModelRequest[TeachingAgentRuntime],
+        handler: Callable[
+            [ModelRequest[TeachingAgentRuntime]], ModelResponse[Any]
+        ],
+    ) -> ModelResponse[Any]:
+        runtime = _runtime(request)
+        routed_request = request.override(
+            model=choose_teaching_model(
+                runtime, primary_model, advanced_model
+            ),
+            tools=select_teaching_tools(runtime),
+        )
+        return handler(routed_request)
+
+    return route
+
+
+def build_teaching_middleware(
+    runtime: TeachingAgentRuntime,
+    *,
+    primary_model: Any,
+    advanced_model: Any | None = None,
+) -> list[AgentMiddleware[Any, TeachingAgentRuntime]]:
+    """Compose dynamic context controls with hard per-run budgets."""
+
+    stack: list[AgentMiddleware[Any, TeachingAgentRuntime]] = [
+        LearningCoachDynamicPrompt,
+        _context_router(
+            primary_model=primary_model,
+            advanced_model=advanced_model,
+        ),
+        ModelCallLimitMiddleware(
+            run_limit=runtime.learning.model_call_limit,
+            exit_behavior="error",
+        ),
+    ]
+    if runtime.learning.tool_call_limit > 0:
+        stack.append(
+            ToolCallLimitMiddleware(
+                run_limit=runtime.learning.tool_call_limit,
+                exit_behavior="error",
+            )
+        )
+    return stack
+
+
+def search_runtime_material(
+    runtime: TeachingAgentRuntime, query: str
+) -> list[dict[str, Any]]:
+    """Execute the read-only material search using runtime-scoped input."""
+
+    return [
+        {
+            "source_id": source.source_id,
+            "text": source.text,
+            "score": source.score,
+        }
+        for source in retrieve_study_sources(
+            {
+                "query": query,
+                "study_material": runtime.task.get("study_material", ""),
+            }
+        )
+    ]
+
+
+def _supports_agent_tools(model: Any) -> bool:
+    profile = getattr(model, "profile", None)
+    return (
+        isinstance(model, BaseChatModel)
+        and isinstance(profile, dict)
+        and profile.get("tool_calling") is True
+    )
+
+
+def _message_text(message: AIMessage) -> str:
+    content = message.content
+    if isinstance(content, str):
+        return content
+    return message.text
+
+
+class ContextEngineeredTeaching:
+    """Run a bounded middleware Agent or a capability-aware LCEL fallback."""
+
+    def __init__(
+        self,
+        *,
+        primary_model: Any,
+        fallback_runnable: Runnable[dict[str, Any], GroundedTeaching],
+        advanced_model: Any | None = None,
+    ) -> None:
+        self.primary_model = primary_model
+        self.advanced_model = advanced_model
+        self.fallback_runnable = fallback_runnable
+
+    def invoke(
+        self,
+        task: dict[str, Any],
+        runtime: LearningRuntimeContext,
+    ) -> GroundedTeaching:
+        teaching = build_teaching_context(task, runtime)
+        agent_runtime = TeachingAgentRuntime(
+            learning=runtime,
+            teaching=teaching,
+            task=dict(task),
+        )
+        selected_model = choose_teaching_model(
+            agent_runtime, self.primary_model, self.advanced_model
+        )
+        selected_tier = (
+            "advanced"
+            if self.advanced_model is not None
+            and selected_model is self.advanced_model
+            else "primary"
+        )
+        if not _supports_agent_tools(selected_model):
+            return self._invoke_lcel(task, agent_runtime, selected_tier)
+
+        tools = select_teaching_tools(agent_runtime)
+        middleware = build_teaching_middleware(
+            agent_runtime,
+            primary_model=self.primary_model,
+            advanced_model=self.advanced_model,
+        )
+        agent = create_agent(
+            self.primary_model,
+            tools=list(_TOOLS.values()),
+            middleware=middleware,
+            context_schema=TeachingAgentRuntime,
+            name="learning_coach_teaching_agent",
+        )
+        user_prompt = self._user_prompt(task, teaching)
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": user_prompt}]},
+            context=agent_runtime,
+        )
+        messages = list(result.get("messages", []))
+        ai_messages = [message for message in messages if isinstance(message, AIMessage)]
+        final_messages = [message for message in ai_messages if not message.tool_calls]
+        if not final_messages:
+            raise RuntimeError("讲解 Agent 没有返回最终讲解。")
+        used_tools = [
+            call["name"]
+            for message in ai_messages
+            for call in message.tool_calls
+        ]
+        sources: list[StudySource] = []
+        for message in ai_messages:
+            for call in message.tool_calls:
+                if call["name"] != search_study_material.name:
+                    continue
+                for source in search_runtime_material(
+                    agent_runtime, str(call.get("args", {}).get("query", ""))
+                ):
+                    candidate = StudySource.model_validate(source)
+                    if all(
+                        existing.source_id != candidate.source_id
+                        for existing in sources
+                    ):
+                        sources.append(candidate)
+        return GroundedTeaching(
+            text=_message_text(final_messages[-1]),
+            sources=sources,
+            context_report=ContextReport(
+                mode="agent",
+                model_tier=selected_tier,
+                available_tools=[tool.name for tool in tools],
+                used_tools=list(dict.fromkeys(used_tools)),
+                model_call_limit=runtime.model_call_limit,
+                tool_call_limit=runtime.tool_call_limit,
+                model_calls=len(ai_messages),
+                tool_calls=len(used_tools),
+                summary_applied=bool(teaching.context_summary),
+            ),
+        )
+
+    def _invoke_lcel(
+        self,
+        task: dict[str, Any],
+        agent_runtime: TeachingAgentRuntime,
+        model_tier: str,
+    ) -> GroundedTeaching:
+        values = dict(task)
+        values.update(
+            learning_goal=agent_runtime.teaching.learning_goal,
+            mastery_level=agent_runtime.teaching.mastery_level,
+            recent_errors="；".join(agent_runtime.teaching.recent_errors) or "暂无",
+            context_summary=agent_runtime.teaching.context_summary,
+        )
+        result = self.fallback_runnable.invoke(values)
+        grounded = (
+            result
+            if isinstance(result, GroundedTeaching)
+            else GroundedTeaching.model_validate(result)
+        )
+        return grounded.model_copy(
+            update={
+                "context_report": ContextReport(
+                    mode="lcel",
+                    model_tier=model_tier,
+                    available_tools=[],
+                    used_tools=[],
+                    model_call_limit=agent_runtime.learning.model_call_limit,
+                    tool_call_limit=agent_runtime.learning.tool_call_limit,
+                    model_calls=1,
+                    tool_calls=0,
+                    summary_applied=bool(
+                        agent_runtime.teaching.context_summary
+                    ),
+                )
+            }
+        )
+
+    @staticmethod
+    def _user_prompt(
+        task: dict[str, Any], teaching: TeachingContext
+    ) -> str:
+        return f"""主题：{task.get('topic', '')}
+诊断重点：{task.get('diagnostic_focus', '暂无')}
+诊断难度：{task.get('diagnostic_difficulty', '暂无')}
+诊断回答：{task.get('diagnostic_answer', '暂无')}
+上次反馈：{task.get('feedback', '暂无')}
+尚未掌握：{task.get('missing_point', '暂无')}
+学习进展摘要：
+{teaching.context_summary}
+请根据需要读取学习进展或检索资料，然后给出针对性讲解。"""

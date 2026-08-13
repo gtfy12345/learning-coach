@@ -29,8 +29,23 @@ class StudySource(BaseModel):
     score: float = Field(gt=0, le=1, description="确定性词法相关度")
 
 
+class ContextReport(BaseModel):
+    """Safe, bounded metadata describing one context-engineered teaching run."""
+
+    mode: Literal["agent", "lcel"]
+    model_tier: Literal["primary", "advanced"]
+    available_tools: list[str] = Field(default_factory=list)
+    used_tools: list[str] = Field(default_factory=list)
+    model_call_limit: int = Field(ge=1)
+    tool_call_limit: int = Field(ge=0)
+    model_calls: int = Field(ge=0)
+    tool_calls: int = Field(ge=0)
+    summary_applied: bool
+
+
 class GroundedTeaching(BaseModel):
     """Teaching text together with the in-memory sources that grounded it."""
 
     text: str
     sources: list[StudySource] = Field(default_factory=list)
+    context_report: ContextReport | None = None
