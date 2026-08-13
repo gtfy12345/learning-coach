@@ -4,6 +4,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from learning_coach.nodes import LearningCoachNodes, route_after_assessment
+from learning_coach.context import LearningRuntimeContext
 from learning_coach.state import LearningState
 
 
@@ -11,7 +12,9 @@ def build_learning_graph(model: Any, *, checkpointer: Any | None = None) -> Any:
     """Build the first complete learning workflow around the supplied model."""
 
     nodes = LearningCoachNodes(model)
-    builder = StateGraph(LearningState)
+    builder = StateGraph(
+        LearningState, context_schema=LearningRuntimeContext
+    )
 
     builder.add_node("make_diagnostic", nodes.make_diagnostic)
     builder.add_node("collect_diagnostic", nodes.collect_diagnostic)

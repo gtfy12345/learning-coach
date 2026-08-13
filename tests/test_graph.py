@@ -5,6 +5,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from learning_coach.graph import build_learning_graph
+from learning_coach.context import LearningRuntimeContext
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import Assessment, Diagnostic
@@ -83,6 +84,42 @@ def test_graph_pauses_for_two_answers_then_finishes() -> None:
     assert "下一步" in result["summary"]
 
 
+def test_graph_runtime_context_survives_interrupts_and_updates_progress() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "context-learning-session"}}
+    runtime = LearningRuntimeContext(
+        learning_goal="能够独立设计 Reducer 合并策略",
+        model_call_limit=3,
+        tool_call_limit=2,
+    )
+
+    result = graph.invoke(
+        {"topic": "LangGraph Reducer", "attempts": 0},
+        config=config,
+        context=runtime,
+    )
+    assert result["learning_goal"] == runtime.learning_goal
+    assert result["mastery_level"] == 0
+    assert result["recent_errors"] == []
+
+    result = graph.invoke(
+        Command(resume="后执行的节点会覆盖前一个。"),
+        config=config,
+        context=runtime,
+    )
+    assert result["context_report"]["mode"] == "lcel"
+    assert runtime.learning_goal in result["context_summary"]
+
+    result = graph.invoke(
+        Command(resume="Annotated[list, operator.add]"),
+        config=config,
+        context=runtime,
+    )
+    assert result["mastery_level"] == 86
+    assert result["recent_errors"] == []
+    assert "86/100" in result["context_summary"]
+
+
 def test_diagnostic_passes_standard_image_content_blocks() -> None:
     model = FakeChatModel()
     nodes = LearningCoachNodes(model)
@@ -152,6 +189,43 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
     assert assessment["score"] == 90
     assert assessment["attempts"] == 1
     assert summary["summary"].startswith("总结 90")
+
+
+def test_assessment_tracks_recent_errors_for_remedial_context() -> None:
+    tasks = LearningCoachRunnables(
+        diagnostic=RunnableLambda(lambda values: None),
+        teaching=RunnableLambda(lambda values: None),
+        quiz=RunnableLambda(lambda values: "question"),
+        assessment=RunnableLambda(
+            lambda values: Assessment(
+                score=55,
+                feedback="应说明循环终止条件。",
+                missing_point="遗漏 attempts 上限",
+            )
+        ),
+        summary=RunnableLambda(lambda values: "summary"),
+    )
+    nodes = LearningCoachNodes(tasks)
+    runtime = LearningRuntimeContext(learning_goal="实现有界补救流程")
+
+    result = nodes.assess(
+        {
+            "topic": "LangGraph",
+            "quiz_question": "如何终止？",
+            "quiz_answer": "达到分数后停止。",
+            "attempts": 0,
+            "recent_errors": ["没有说明 score 阈值"],
+        },
+        runtime=runtime,
+    )
+
+    assert result["mastery_level"] == 55
+    assert result["recent_errors"] == [
+        "没有说明 score 阈值",
+        "遗漏 attempts 上限",
+    ]
+    assert "55/100" in result["context_summary"]
+    assert "遗漏 attempts 上限" in result["context_summary"]
 
 
 def test_graph_streams_task_status_text_and_sources_before_final_state() -> None:

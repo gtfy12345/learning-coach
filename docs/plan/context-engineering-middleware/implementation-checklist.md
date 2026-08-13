@@ -18,8 +18,8 @@
 
 ## Phase 3: LangGraph、Web 与 CLI 集成
 
-- [ ] 3.1 更新节点、图与 CLI Runtime Context
-- [ ] 3.2 更新 Web API、页面与 SSE 展示
+- [x] 3.1 更新节点、图与 CLI Runtime Context
+- [x] 3.2 更新 Web API、页面与 SSE 展示
 
 ## Phase 4: 文档、验证与交付
 

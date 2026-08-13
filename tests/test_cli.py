@@ -9,9 +9,17 @@ from learning_coach import cli
 class FinishedGraph:
     def __init__(self) -> None:
         self.initial_state: dict[str, Any] | None = None
+        self.runtime_context: Any = None
 
-    def invoke(self, value: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    def invoke(
+        self,
+        value: dict[str, Any],
+        config: dict[str, Any],
+        *,
+        context: Any = None,
+    ) -> dict[str, Any]:
         self.initial_state = value
+        self.runtime_context = context
         return {"summary": "done"}
 
 
@@ -34,8 +42,24 @@ def test_run_passes_images_into_initial_graph_state(monkeypatch) -> None:
     assert graph.initial_state == {
         "topic": "状态图",
         "attempts": 0,
+        "learning_goal": "掌握主题：状态图",
+        "mastery_level": 0,
+        "recent_errors": [],
         "diagnostic_images": [block],
     }
+
+
+def test_run_passes_learning_goal_as_state_and_runtime_context(monkeypatch) -> None:
+    graph = FinishedGraph()
+    monkeypatch.setattr(
+        cli, "create_model_suite", lambda: SimpleNamespace(accepts_images=True)
+    )
+    monkeypatch.setattr(cli, "build_learning_graph", lambda models: graph)
+
+    cli.run("LCEL", learning_goal="能独立组合 Runnable")
+
+    assert graph.initial_state["learning_goal"] == "能独立组合 Runnable"
+    assert graph.runtime_context.learning_goal == "能独立组合 Runnable"
 
 
 def test_run_rejects_images_for_text_only_model(monkeypatch) -> None:
@@ -72,3 +96,16 @@ def test_main_dispatches_web_without_treating_it_as_learning_topic(monkeypatch) 
     cli.main(["web", "--model", "codex_cli:default"])
 
     assert calls == [["--model", "codex_cli:default"]]
+
+
+def test_main_accepts_optional_learning_goal(monkeypatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        cli,
+        "run",
+        lambda topic, **kwargs: calls.append((topic, kwargs.get("learning_goal"))),
+    )
+
+    cli.main(["LCEL", "--goal", "能独立组合 Runnable"])
+
+    assert calls == [("LCEL", "能独立组合 Runnable")]

@@ -113,6 +113,9 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert first["status"] == "waiting"
     assert first["stage"] == "diagnostic"
     assert first["question"] == "StateGraph 的条件边负责什么？"
+    assert first["learning_goal"] == "掌握主题：LangGraph 条件边"
+    assert first["mastery_level"] == 0
+    assert first["recent_errors"] == []
 
     diagnostic = client.post(
         f"/api/sessions/{first['session_id']}/answers",
@@ -123,6 +126,8 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert second["stage"] == "quiz"
     assert second["explanation"] == "条件边根据状态选择下一节点。"
     assert "route_after_assessment" in second["question"]
+    assert second["context_report"]["mode"] == "lcel"
+    assert second["context_report"]["model_call_limit"] == 3
 
     quiz = client.post(
         f"/api/sessions/{first['session_id']}/answers",
@@ -133,7 +138,37 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert final["status"] == "completed"
     assert final["stage"] == "summary"
     assert final["score"] == 86
+    assert final["mastery_level"] == 86
     assert "下一步" in final["summary"]
+
+
+def test_web_accepts_learning_goal_and_exposes_context_progress() -> None:
+    client, _ = make_client(scores=(60, 88))
+
+    started = client.post(
+        "/api/sessions",
+        data={
+            "topic": "LangGraph 条件边",
+            "learning_goal": "能独立实现有界补救流程",
+        },
+    ).json()
+    taught = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "根据状态选择节点。"},
+    ).json()
+    assessed = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "返回节点名称。"},
+    ).json()
+
+    assert started["learning_goal"] == "能独立实现有界补救流程"
+    assert taught["context_summary"].startswith(
+        "学习目标：能独立实现有界补救流程"
+    )
+    assert assessed["mastery_level"] == 60
+    assert assessed["recent_errors"] == ["条件函数应读取结构化状态。"]
+    assert "60/100" in assessed["context_summary"]
+    assert assessed["context_report"]["model_calls"] == 1
 
 
 def test_web_session_grounds_teaching_in_optional_study_material() -> None:
@@ -226,6 +261,8 @@ def test_config_endpoint_never_exposes_credentials() -> None:
         "assessment_model_id": "fake:assessment",
         "accepts_images": True,
         "run_timeout_seconds": 120.0,
+        "context_model_call_limit": 3,
+        "context_tool_call_limit": 2,
     }
     assert "api_key" not in response.text.lower()
 
@@ -256,6 +293,8 @@ def test_config_endpoint_exposes_fallback_ids_without_credentials() -> None:
         "assessment_fallback_model_id": "fake:assessment-fallback",
         "accepts_images": True,
         "run_timeout_seconds": 120.0,
+        "context_model_call_limit": 3,
+        "context_tool_call_limit": 2,
     }
     assert "api_key" not in response.text.lower()
 
@@ -403,12 +442,17 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     response = client.get("/")
 
     assert 'id="study-material"' in response.text
+    assert 'id="learning-goal"' in response.text
+    assert 'id="context-insight"' in response.text
     assert 'id="cancel-run"' in response.text
     app_script = client.get("/static/app.js").text
     assert "AbortController" in app_script
     assert "/api/sessions/stream" in app_script
     assert "answers/stream" in app_script
     assert 'stage === "teaching"' in app_script
+    assert 'formData.append("learning_goal"' in app_script
+    assert "context_summary" in app_script
+    assert "context_report" in app_script
 
 
 def test_cancelled_stream_does_not_register_an_incomplete_session() -> None:

@@ -8,6 +8,10 @@ from typing import Any
 from langgraph.types import Command
 
 from learning_coach.auth import run_auth_action
+from learning_coach.context import (
+    LearningContextSettings,
+    create_learning_runtime_context,
+)
 from learning_coach.graph import build_learning_graph
 from learning_coach.media import image_content_block
 from learning_coach.model import create_model_suite
@@ -40,6 +44,7 @@ def run(
     *,
     thread_id: str | None = None,
     image_sources: Sequence[str] = (),
+    learning_goal: str | None = None,
 ) -> dict[str, Any]:
     """Run one learning session until the graph finishes."""
 
@@ -52,18 +57,33 @@ def run(
         )
 
     graph = build_learning_graph(models)
+    runtime_context = create_learning_runtime_context(
+        topic,
+        learning_goal=learning_goal,
+        settings=LearningContextSettings.from_environ(os.environ),
+    )
     config = {
         "configurable": {"thread_id": thread_id or f"learning-{uuid.uuid4().hex}"}
     }
-    initial_state: dict[str, Any] = {"topic": topic, "attempts": 0}
+    initial_state: dict[str, Any] = {
+        "topic": topic,
+        "learning_goal": runtime_context.learning_goal,
+        "mastery_level": 0,
+        "recent_errors": [],
+        "attempts": 0,
+    }
     if images:
         initial_state["diagnostic_images"] = images
-    result = graph.invoke(initial_state, config=config)
+    result = graph.invoke(
+        initial_state, config=config, context=runtime_context
+    )
 
     while result.get("__interrupt__"):
         pending = result["__interrupt__"][0]
         answer = _ask_for_answer(pending.value)
-        result = graph.invoke(Command(resume=answer), config=config)
+        result = graph.invoke(
+            Command(resume=answer), config=config, context=runtime_context
+        )
 
     print("\n学习小结")
     print(result["summary"])
@@ -132,9 +152,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         metavar="PATH_OR_URL",
         help="随诊断题发送的图片；可重复传入",
     )
+    parser.add_argument(
+        "--goal",
+        help="本次学习目标；未填写时默认为掌握当前主题",
+    )
     args = parser.parse_args(arguments)
 
     try:
-        run(_read_topic(args.topic), image_sources=args.image)
+        run(
+            _read_topic(args.topic),
+            image_sources=args.image,
+            learning_goal=args.goal,
+        )
     except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

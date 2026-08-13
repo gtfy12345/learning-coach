@@ -3,6 +3,7 @@ const sessionView = document.querySelector("#session-view");
 const startForm = document.querySelector("#start-form");
 const answerForm = document.querySelector("#answer-form");
 const topicInput = document.querySelector("#topic");
+const learningGoalInput = document.querySelector("#learning-goal");
 const imageInput = document.querySelector("#image");
 const studyMaterialInput = document.querySelector("#study-material");
 const uploadTitle = document.querySelector("#upload-title");
@@ -18,6 +19,9 @@ const panelStatus = document.querySelector("#panel-status");
 const messageTemplate = document.querySelector("#message-template");
 const cancelStartButton = document.querySelector("#cancel-start");
 const cancelRunButton = document.querySelector("#cancel-run");
+const contextGoal = document.querySelector("#context-goal");
+const contextMastery = document.querySelector("#context-mastery");
+const contextBudget = document.querySelector("#context-budget");
 
 let sessionId = null;
 let activeController = null;
@@ -120,7 +124,18 @@ function setProgress(stage, completed = false) {
   panelStatus.textContent = labels[normalizedStage] || "学习进行中";
 }
 
+function updateContextInsight(data) {
+  contextGoal.textContent = data.learning_goal || `掌握主题：${data.topic}`;
+  contextMastery.textContent = `掌握度 ${data.mastery_level ?? data.score ?? 0} / 100`;
+  const report = data.context_report;
+  contextBudget.textContent = report
+    ? `${report.mode.toUpperCase()} · 模型 ${report.model_calls}/${report.model_call_limit} · 工具 ${report.tool_calls}/${report.tool_call_limit}`
+    : "预算将在讲解后显示";
+  if (data.context_summary) contextGoal.title = data.context_summary;
+}
+
 function showQuestion(data, streamedTasks = new Set()) {
+  updateContextInsight(data);
   if (data.stage === "diagnostic") {
     addMessage("coach", "诊断问题", data.question);
     setProgress("diagnostic");
@@ -147,6 +162,7 @@ function showQuestion(data, streamedTasks = new Set()) {
 }
 
 function showResult(data) {
+  updateContextInsight(data);
   if (data.feedback) {
     addMessage(
       "assessment",
@@ -170,6 +186,9 @@ startForm.addEventListener("submit", async (event) => {
   setLoading(startForm, true);
   const formData = new FormData();
   formData.append("topic", topicInput.value);
+  if (learningGoalInput.value.trim()) {
+    formData.append("learning_goal", learningGoalInput.value);
+  }
   if (imageInput.files[0]) formData.append("image", imageInput.files[0]);
   if (studyMaterialInput.value.trim()) {
     formData.append("study_material", studyMaterialInput.value);
@@ -293,6 +312,9 @@ document.querySelector("#restart-button").addEventListener("click", () => {
     item.classList.remove("active", "done");
   });
   panelStatus.textContent = "等待开始";
+  contextGoal.textContent = "等待学习目标";
+  contextMastery.textContent = "掌握度 0 / 100";
+  contextBudget.textContent = "预算将在讲解后显示";
   topicInput.focus();
 });
 

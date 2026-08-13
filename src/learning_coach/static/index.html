@@ -58,6 +58,20 @@
               </button>
             </div>
 
+            <label class="material-box" for="learning-goal">
+              <span>
+                <strong>这次希望学到什么程度？</strong>
+                <small>可选 · 教练会据此动态调整讲解深度、工具和模型</small>
+              </span>
+              <input
+                id="learning-goal"
+                name="learning_goal"
+                type="text"
+                maxlength="1000"
+                placeholder="例如：能够独立实现一个有终止条件的补救流程"
+              />
+            </label>
+
             <label class="upload-box" for="image">
               <span class="upload-icon" aria-hidden="true">＋</span>
               <span>
@@ -164,6 +178,12 @@
         <div class="panel-note">
           <span aria-hidden="true">◎</span>
           <p><strong>当前会话只保存在内存</strong><br />服务重启后需要重新开始。</p>
+        </div>
+        <div class="context-insight" id="context-insight">
+          <strong>动态学习上下文</strong>
+          <span id="context-goal">等待学习目标</span>
+          <span id="context-mastery">掌握度 0 / 100</span>
+          <span id="context-budget">预算将在讲解后显示</span>
         </div>
       </aside>
     </main>

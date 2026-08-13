@@ -16,10 +16,15 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator
 
 from learning_coach.graph import build_learning_graph
+from learning_coach.context import (
+    LearningContextSettings,
+    LearningRuntimeContext,
+    create_learning_runtime_context,
+)
 from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
 from learning_coach.retrieval import normalize_study_material
-from learning_coach.schemas import StudySource
+from learning_coach.schemas import ContextReport, StudySource
 
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
@@ -79,6 +84,11 @@ class SessionView(BaseModel):
     status: Literal["waiting", "completed"]
     stage: Literal["diagnostic", "quiz", "summary"]
     topic: str
+    learning_goal: str
+    mastery_level: int = 0
+    recent_errors: list[str] = Field(default_factory=list)
+    context_summary: str | None = None
+    context_report: ContextReport | None = None
     question: str | None = None
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
@@ -95,10 +105,13 @@ class PublicModelConfig(BaseModel):
     configured: bool
     chat_model_id: str | None = None
     assessment_model_id: str | None = None
+    advanced_chat_model_id: str | None = None
     chat_fallback_model_id: str | None = None
     assessment_fallback_model_id: str | None = None
     accepts_images: bool | None = None
     run_timeout_seconds: float | None = None
+    context_model_call_limit: int | None = None
+    context_tool_call_limit: int | None = None
     error: str | None = None
 
 
@@ -115,12 +128,14 @@ class LearningSessionService:
         chat_fallback_model_id: str | None = None,
         assessment_fallback_model_id: str | None = None,
         run_timeout_seconds: float | None = None,
+        context_settings: LearningContextSettings | None = None,
     ) -> None:
         self._models = models
         self._models_factory = models_factory
         self._graph: Any | None = None
         self._chat_model_id = chat_model_id
         self._assessment_model_id = assessment_model_id
+        self._advanced_chat_model_id: str | None = None
         self._chat_fallback_model_id = chat_fallback_model_id
         self._assessment_fallback_model_id = assessment_fallback_model_id
         self._run_timeout_seconds = (
@@ -131,6 +146,10 @@ class LearningSessionService:
         if self._run_timeout_seconds <= 0:
             raise ValueError("run_timeout_seconds 必须是正数。")
         self._sessions: set[str] = set()
+        self._runtime_contexts: dict[str, LearningRuntimeContext] = {}
+        self._context_settings = context_settings or LearningContextSettings.from_environ(
+            os.environ
+        )
         self._setup_lock = threading.Lock()
         self._invoke_lock = threading.Lock()
 
@@ -159,6 +178,7 @@ class LearningSessionService:
                 return PublicModelConfig(configured=False, error=str(exc))
             self._chat_model_id = settings.chat_model_id
             self._assessment_model_id = settings.assessment_model_id
+            self._advanced_chat_model_id = settings.advanced_chat_model_id
             self._chat_fallback_model_id = settings.chat_fallback_model_id
             self._assessment_fallback_model_id = (
                 settings.assessment_fallback_model_id
@@ -169,10 +189,13 @@ class LearningSessionService:
             configured=True,
             chat_model_id=self._chat_model_id,
             assessment_model_id=self._assessment_model_id,
+            advanced_chat_model_id=self._advanced_chat_model_id,
             chat_fallback_model_id=self._chat_fallback_model_id,
             assessment_fallback_model_id=self._assessment_fallback_model_id,
             accepts_images=self._models.accepts_images,
             run_timeout_seconds=self._run_timeout_seconds,
+            context_model_call_limit=self._context_settings.model_call_limit,
+            context_tool_call_limit=self._context_settings.tool_call_limit,
         )
 
     def _initial_state(
@@ -180,6 +203,7 @@ class LearningSessionService:
         topic: str,
         image_blocks: Sequence[dict[str, Any]],
         study_material: str,
+        learning_goal: str = "",
     ) -> dict[str, Any]:
         normalized_topic = topic.strip()
         if not normalized_topic:
@@ -192,8 +216,16 @@ class LearningSessionService:
         if image_blocks and not self._models.accepts_images:
             raise ValueError("当前主模型不支持图片输入，请移除图片或更换视觉模型。")
 
+        runtime_context = create_learning_runtime_context(
+            normalized_topic,
+            learning_goal=learning_goal,
+            settings=self._context_settings,
+        )
         initial_state: dict[str, Any] = {
             "topic": normalized_topic,
+            "learning_goal": runtime_context.learning_goal,
+            "mastery_level": 0,
+            "recent_errors": [],
             "attempts": 0,
         }
         normalized_material = normalize_study_material(study_material)
@@ -208,18 +240,29 @@ class LearningSessionService:
         topic: str,
         image_blocks: Sequence[dict[str, Any]] = (),
         study_material: str = "",
+        learning_goal: str = "",
     ) -> SessionView:
         graph = self._ensure_graph()
         session_id = uuid.uuid4().hex
-        initial_state = self._initial_state(topic, image_blocks, study_material)
+        initial_state = self._initial_state(
+            topic, image_blocks, study_material, learning_goal
+        )
+        runtime_context = create_learning_runtime_context(
+            initial_state["topic"],
+            learning_goal=initial_state["learning_goal"],
+            settings=self._context_settings,
+        )
         config = session_run_config(
             session_id,
             has_study_material=bool(initial_state.get("study_material")),
         )
 
         with self._invoke_lock:
-            result = graph.invoke(initial_state, config=config)
+            result = graph.invoke(
+                initial_state, config=config, context=runtime_context
+            )
         self._sessions.add(session_id)
+        self._runtime_contexts[session_id] = runtime_context
         return self._view(session_id, result)
 
     def create_session_events(
@@ -227,9 +270,17 @@ class LearningSessionService:
         topic: str,
         image_blocks: Sequence[dict[str, Any]] = (),
         study_material: str = "",
+        learning_goal: str = "",
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        initial_state = self._initial_state(topic, image_blocks, study_material)
+        initial_state = self._initial_state(
+            topic, image_blocks, study_material, learning_goal
+        )
         session_id = uuid.uuid4().hex
+        self._runtime_contexts[session_id] = create_learning_runtime_context(
+            initial_state["topic"],
+            learning_goal=initial_state["learning_goal"],
+            settings=self._context_settings,
+        )
         return self._graph_events(
             session_id,
             initial_state,
@@ -242,7 +293,11 @@ class LearningSessionService:
         graph = self._ensure_graph()
         config = session_run_config(session_id)
         with self._invoke_lock:
-            result = graph.invoke(Command(resume=normalized_answer), config=config)
+            result = graph.invoke(
+                Command(resume=normalized_answer),
+                config=config,
+                context=self._runtime_contexts[session_id],
+            )
         return self._view(session_id, result)
 
     def answer_events(
@@ -290,6 +345,7 @@ class LearningSessionService:
                     config=config,
                     stream_mode=["custom", "values"],
                     version="v2",
+                    context=self._runtime_contexts[session_id],
                 ):
                     if part["type"] == "custom":
                         event = dict(part["data"])
@@ -300,6 +356,8 @@ class LearningSessionService:
                         if part.get("interrupts"):
                             latest_interrupts = part["interrupts"]
         except TimeoutError:
+            if register_session:
+                self._runtime_contexts.pop(session_id, None)
             yield "error", {
                 "code": "run_timeout",
                 "message": "本次模型运行超时，请重试。",
@@ -307,8 +365,12 @@ class LearningSessionService:
             yield "done", {"ok": False}
             return
         except asyncio.CancelledError:
+            if register_session:
+                self._runtime_contexts.pop(session_id, None)
             raise
         except Exception:
+            if register_session:
+                self._runtime_contexts.pop(session_id, None)
             yield "error", {
                 "code": "run_failed",
                 "message": "本次模型运行失败，请检查配置后重试。",
@@ -342,6 +404,13 @@ class LearningSessionService:
                 status="waiting",
                 stage="diagnostic" if stage == "diagnostic" else "quiz",
                 topic=state["topic"],
+                learning_goal=state.get(
+                    "learning_goal", f"掌握主题：{state['topic']}"
+                ),
+                mastery_level=state.get("mastery_level", state.get("score", 0) or 0),
+                recent_errors=state.get("recent_errors", []),
+                context_summary=state.get("context_summary"),
+                context_report=state.get("context_report"),
                 question=str(payload.get("question", "")),
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
@@ -357,6 +426,13 @@ class LearningSessionService:
             status="completed",
             stage="summary",
             topic=state["topic"],
+            learning_goal=state.get(
+                "learning_goal", f"掌握主题：{state['topic']}"
+            ),
+            mastery_level=state.get("mastery_level", state.get("score", 0) or 0),
+            recent_errors=state.get("recent_errors", []),
+            context_summary=state.get("context_summary"),
+            context_report=state.get("context_report"),
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),
@@ -417,6 +493,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     )
     async def start_session(
         topic: str = Form(...),
+        learning_goal: str = Form(default=""),
         image: UploadFile | None = File(default=None),
         study_material: str = Form(default=""),
     ) -> SessionView:
@@ -435,6 +512,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 topic,
                 image_blocks,
                 study_material,
+                learning_goal,
             )
         except Exception as exc:
             _raise_http_error(exc)
@@ -446,6 +524,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     @application.post("/api/sessions/stream", status_code=201)
     async def start_session_stream(
         topic: str = Form(...),
+        learning_goal: str = Form(default=""),
         image: UploadFile | None = File(default=None),
         study_material: str = Form(default=""),
     ) -> StreamingResponse:
@@ -460,7 +539,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                     )
                 )
             events = session_service.create_session_events(
-                topic, image_blocks, study_material
+                topic, image_blocks, study_material, learning_goal
             )
         except Exception as exc:
             _raise_http_error(exc)

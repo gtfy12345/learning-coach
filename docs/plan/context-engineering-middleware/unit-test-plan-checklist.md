@@ -18,8 +18,8 @@
 
 ## Phase 3: LangGraph、Web 与 CLI 测试
 
-- [ ] 3.1 图与 CLI
-- [ ] 3.2 Web 与 SSE
+- [x] 3.1 图与 CLI
+- [x] 3.2 Web 与 SSE
 
 ## Phase 4: 文档与完整回归
 

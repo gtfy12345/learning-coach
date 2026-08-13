@@ -283,6 +283,10 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .panel-note p { margin: 0; font-size: 10px; line-height: 1.65; }
 .panel-note strong { color: rgba(255,255,255,0.84); }
 
+.context-insight { margin-top: 14px; padding: 14px; display: grid; gap: 7px; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; background: rgba(11,125,123,0.16); }
+.context-insight strong { color: #f0d39e; font-size: 11px; }
+.context-insight span { color: rgba(255,255,255,0.68); font-size: 10px; line-height: 1.5; }
+
 .session-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
 .session-heading .eyebrow { margin-bottom: 9px; }
 .session-heading h1 { margin: 0; font-family: ui-serif, Georgia, serif; font-size: clamp(28px, 4vw, 44px); letter-spacing: -0.035em; }
@@ -320,7 +324,7 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 1fr; }
   .coach-panel { order: -1; padding: 20px 24px; }
-  .panel-intro, .panel-note { display: none; }
+  .panel-intro, .panel-note, .context-insight { display: none; }
   .progress-list { margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); }
   .progress-list li { min-height: auto; display: block; text-align: center; }
   .progress-list li::after { top: 14px; left: calc(50% + 18px); width: calc(100% - 36px); height: 1px; }

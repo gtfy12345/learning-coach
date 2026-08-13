@@ -1,8 +1,15 @@
 from typing import Any, Literal
 
 from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
+from learning_coach.context import (
+    LearningRuntimeContext,
+    build_context_summary,
+    create_learning_runtime_context,
+    update_recent_errors,
+)
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import GroundedTeaching
@@ -31,7 +38,12 @@ class LearningCoachNodes:
         )
         self.runnables = LearningCoachRunnables.from_models(model_suite)
 
-    def make_diagnostic(self, state: LearningState) -> dict[str, str]:
+    def make_diagnostic(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        learning_runtime = self._runtime_context(state, runtime)
         self._write_status("diagnostic", "started")
         diagnostic = self.runnables.diagnostic.invoke(
             {
@@ -40,6 +52,9 @@ class LearningCoachNodes:
             }
         )
         result = {
+            "learning_goal": learning_runtime.learning_goal,
+            "mastery_level": state.get("mastery_level", 0),
+            "recent_errors": list(state.get("recent_errors", [])),
             "diagnostic_question": diagnostic.question,
             "diagnostic_focus": diagnostic.focus,
             "diagnostic_difficulty": diagnostic.difficulty,
@@ -56,7 +71,12 @@ class LearningCoachNodes:
         )
         return {"diagnostic_answer": str(answer), "attempts": 0}
 
-    def teach(self, state: LearningState) -> dict[str, str]:
+    def teach(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        learning_runtime = self._runtime_context(state, runtime)
         task_input = {
             "topic": state["topic"],
             "diagnostic_focus": state.get("diagnostic_focus", "暂无"),
@@ -65,35 +85,35 @@ class LearningCoachNodes:
             "feedback": state.get("feedback", "暂无"),
             "missing_point": state.get("missing_point", "暂无"),
             "study_material": state.get("study_material", ""),
+            "learning_goal": learning_runtime.learning_goal,
+            "mastery_level": state.get("mastery_level", 0),
+            "recent_errors": state.get("recent_errors", []),
+            "context_summary": state.get("context_summary", ""),
         }
         self._write_status("teaching", "started")
-        text_parts: list[str] = []
-        sources: list[Any] = []
-        for chunk in self.runnables.teaching.stream(task_input):
-            teaching = (
-                chunk
-                if isinstance(chunk, GroundedTeaching)
-                else GroundedTeaching.model_validate(chunk)
+        teaching = self.runnables.teach(task_input, learning_runtime)
+        sources: list[Any] = list(teaching.sources)
+        if sources:
+            self._write_event(
+                {
+                    "event": "sources",
+                    "task": "teaching",
+                    "sources": [source.model_dump() for source in sources],
+                }
             )
-            if teaching.sources and not sources:
-                sources = teaching.sources
-                self._write_event(
-                    {
-                        "event": "sources",
-                        "task": "teaching",
-                        "sources": [source.model_dump() for source in sources],
-                    }
-                )
-            if teaching.text:
-                text_parts.append(teaching.text)
-                self._write_token("teaching", teaching.text)
+        self._write_token("teaching", teaching.text)
         self._write_status("teaching", "completed")
-        return {
-            "explanation": "".join(text_parts),
+        result: dict[str, Any] = {
+            "explanation": teaching.text,
             "explanation_sources": [
                 source.model_dump() for source in sources
             ],
+            "context_summary": state.get("context_summary")
+            or build_context_summary(state, learning_runtime),
         }
+        if teaching.context_report is not None:
+            result["context_report"] = teaching.context_report.model_dump()
+        return result
 
     def make_quiz(self, state: LearningState) -> dict[str, str]:
         self._write_status("quiz", "started")
@@ -121,7 +141,12 @@ class LearningCoachNodes:
         )
         return {"quiz_answer": str(answer)}
 
-    def assess(self, state: LearningState) -> dict[str, Any]:
+    def assess(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        learning_runtime = self._runtime_context(state, runtime)
         self._write_status("assessment", "started")
         assessment = self.runnables.assessment.invoke(
             {
@@ -130,14 +155,44 @@ class LearningCoachNodes:
                 "quiz_answer": state["quiz_answer"],
             }
         )
+        recent_errors = list(state.get("recent_errors", []))
+        if assessment.score < learning_runtime.target_mastery:
+            recent_errors = update_recent_errors(
+                recent_errors, assessment.missing_point
+            )
+        progress = dict(state)
+        progress.update(
+            mastery_level=assessment.score,
+            recent_errors=recent_errors,
+            feedback=assessment.feedback,
+        )
         result = {
             "score": assessment.score,
+            "mastery_level": assessment.score,
             "feedback": assessment.feedback,
             "missing_point": assessment.missing_point,
+            "recent_errors": recent_errors,
+            "context_summary": build_context_summary(
+                progress, learning_runtime
+            ),
             "attempts": state.get("attempts", 0) + 1,
         }
         self._write_status("assessment", "completed")
         return result
+
+    @staticmethod
+    def _runtime_context(
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None,
+    ) -> LearningRuntimeContext:
+        if isinstance(runtime, LearningRuntimeContext):
+            return runtime
+        runtime_context = getattr(runtime, "context", None)
+        if isinstance(runtime_context, LearningRuntimeContext):
+            return runtime_context
+        return create_learning_runtime_context(
+            state["topic"], learning_goal=state.get("learning_goal")
+        )
 
     def summarize(self, state: LearningState) -> dict[str, str]:
         self._write_status("summary", "started")
