@@ -26,6 +26,7 @@ const contextGoal = document.querySelector("#context-goal");
 const contextMastery = document.querySelector("#context-mastery");
 const contextBudget = document.querySelector("#context-budget");
 const contextIngestion = document.querySelector("#context-ingestion");
+const contextRetrieval = document.querySelector("#context-retrieval");
 
 let sessionId = null;
 let activeController = null;
@@ -108,9 +109,24 @@ function sourceText(sources) {
   return sources
     .map((source) => {
       const label = [source.source_name, source.location].filter(Boolean).join(" · ");
-      return `[${label || source.source_id}] ${source.text}`;
+      const score = source.retrieval_score?.rerank ?? source.score;
+      const relevance = Number.isFinite(score)
+        ? ` · 相关度 ${Math.round(score * 100)}%`
+        : "";
+      return `[${label || source.source_id}${relevance}] ${source.text}`;
     })
     .join("\n\n");
+}
+
+function retrievalText(report) {
+  if (!report) return "检索将在讲解时运行";
+  const quality = {
+    sufficient: "证据充足",
+    insufficient: "证据不足",
+    empty: "没有命中",
+  }[report.quality] || report.quality;
+  const rewritten = report.rewritten ? " · 已改写查询" : "";
+  return `Hybrid RAG · ${report.attempts.length}/2 次 · ${quality}${rewritten}`;
 }
 
 function setProgress(stage, completed = false) {
@@ -142,6 +158,7 @@ function updateContextInsight(data) {
   contextIngestion.textContent = ingestion
     ? `资料 ${ingestion.sources_received} 个 · 新增 ${ingestion.sources_added} · 更新 ${ingestion.sources_updated} · 跳过 ${ingestion.sources_skipped}`
     : "尚未摄取学习资料";
+  contextRetrieval.textContent = retrievalText(data.retrieval_report);
   if (data.context_summary) contextGoal.title = data.context_summary;
 }
 
@@ -278,6 +295,9 @@ answerForm.addEventListener("submit", async (event) => {
           streamedTasks.add("sources");
           addMessage("assessment", "本轮参考资料", sourceText(payload.sources));
         }
+        if (eventName === "retrieval" && payload.report) {
+          contextRetrieval.textContent = retrievalText(payload.report);
+        }
         if (eventName === "state") finalState = payload;
         if (eventName === "error") throw { detail: payload.message };
       },
@@ -345,6 +365,7 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   contextMastery.textContent = "掌握度 0 / 100";
   contextBudget.textContent = "预算将在讲解后显示";
   contextIngestion.textContent = "尚未摄取学习资料";
+  contextRetrieval.textContent = "检索将在讲解时运行";
   topicInput.focus();
 });
 
@@ -363,6 +384,7 @@ request("/api/config")
     modelLabel.textContent = fallbackModels.length
       ? `${primaryLabel} · 备用 ${fallbackModels.join(" / ")}`
       : primaryLabel;
+    modelLabel.textContent += ` · 检索 ${config.embedding_model_id}`;
     if (!config.accepts_images) {
       imageInput.disabled = true;
       uploadTitle.textContent = "当前模型未声明图片能力";

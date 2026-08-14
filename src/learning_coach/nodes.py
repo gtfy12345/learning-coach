@@ -95,9 +95,22 @@ class LearningCoachNodes:
         text_parts: list[str] = []
         sources: list[Any] = []
         context_report: Any = None
+        retrieval_report: Any = None
         for teaching in self.runnables.teach_stream(
             task_input, learning_runtime
         ):
+            if (
+                teaching.retrieval_report is not None
+                and retrieval_report is None
+            ):
+                retrieval_report = teaching.retrieval_report
+                self._write_event(
+                    {
+                        "event": "retrieval",
+                        "task": "teaching",
+                        "report": retrieval_report.model_dump(),
+                    }
+                )
             if teaching.sources and not sources:
                 sources = list(teaching.sources)
                 self._write_event(
@@ -123,6 +136,8 @@ class LearningCoachNodes:
         }
         if context_report is not None:
             result["context_report"] = context_report.model_dump()
+        if retrieval_report is not None:
+            result["retrieval_report"] = retrieval_report.model_dump()
         return result
 
     def make_quiz(self, state: LearningState) -> dict[str, str]:

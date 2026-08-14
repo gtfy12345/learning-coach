@@ -1,21 +1,22 @@
-import re
-from collections import Counter
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
 
+from learning_coach.hybrid_rag import (
+    HybridRetrievalResult,
+    HybridStudyRetriever,
+    RagSettings,
+)
 from learning_coach.ingestion import StudyChunkRecord
+from learning_coach.schemas import RetrievalScore, StudySource
 
 MAX_STUDY_MATERIAL_CHARS = 50_000
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 120
 DEFAULT_TOP_K = 3
-
-_LATIN_TOKEN = re.compile(r"[a-z0-9_]+")
-_CJK_RUN = re.compile(r"[\u3400-\u9fff]+")
-
 
 @dataclass(frozen=True)
 class StudyChunk:
@@ -27,7 +28,7 @@ class StudyChunk:
 
 @dataclass(frozen=True)
 class RetrievedStudySource:
-    """A relevant chunk with a deterministic lexical score."""
+    """A relevant chunk with optional Hybrid RAG trace scores."""
 
     source_id: str
     text: str
@@ -37,6 +38,8 @@ class RetrievedStudySource:
     source_type: str | None = None
     location: str | None = None
     chunk_hash: str | None = None
+    retrieval_score: RetrievalScore | None = None
+    retrieval_attempt: int | None = None
 
 
 def normalize_study_material(value: str | None) -> str:
@@ -100,32 +103,6 @@ def chunk_study_material(
     return chunks
 
 
-def _lexical_terms(text: str) -> Counter[str]:
-    normalized = text.casefold()
-    terms = Counter(_LATIN_TOKEN.findall(normalized))
-    for run in _CJK_RUN.findall(normalized):
-        if len(run) == 1:
-            terms[run] += 1
-            continue
-        for size in (2, 3):
-            for index in range(len(run) - size + 1):
-                terms[run[index : index + size]] += 1
-    return terms
-
-
-def _relevance(query: str, text: str) -> float:
-    query_terms = _lexical_terms(query)
-    if not query_terms:
-        return 0.0
-    text_terms = _lexical_terms(text)
-    overlap = sum(
-        min(count, text_terms.get(term, 0)) for term, count in query_terms.items()
-    )
-    if overlap == 0:
-        return 0.0
-    return round(overlap / sum(query_terms.values()), 6)
-
-
 def retrieve_study_sources(
     values: Mapping[str, Any],
     *,
@@ -133,7 +110,7 @@ def retrieve_study_sources(
     overlap: int = DEFAULT_CHUNK_OVERLAP,
     top_k: int = DEFAULT_TOP_K,
 ) -> list[RetrievedStudySource]:
-    """Retrieve the most relevant positive-scoring in-memory chunks."""
+    """Backward-compatible source list backed by the Hybrid RAG engine."""
 
     if top_k <= 0:
         raise ValueError("top_k 必须是正整数。")
@@ -141,7 +118,47 @@ def retrieve_study_sources(
     if not query:
         return []
 
+    result = retrieve_study_sources_with_report(
+        values,
+        chunk_size=chunk_size,
+        overlap=overlap,
+        top_k=top_k,
+    )
+    return [
+        RetrievedStudySource(
+            source_id=source.source_id,
+            text=source.text,
+            score=source.score,
+            source_name=source.source_name,
+            source_uri=source.source_uri,
+            source_type=source.source_type,
+            location=source.location,
+            chunk_hash=source.chunk_hash,
+            retrieval_score=source.retrieval_score,
+            retrieval_attempt=source.retrieval_attempt,
+        )
+        for source in result.sources
+    ]
+
+
+def retrieve_study_sources_with_report(
+    values: Mapping[str, Any],
+    *,
+    retriever: HybridStudyRetriever | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
+    top_k: int = DEFAULT_TOP_K,
+) -> HybridRetrievalResult:
+    """Adapt structured or legacy material into one traced Hybrid retrieval."""
+
+    if top_k <= 0 or top_k > DEFAULT_TOP_K:
+        raise ValueError(f"top_k 必须在 1 到 {DEFAULT_TOP_K} 之间。")
+    query = str(values.get("query", "")).strip()
+    if not query:
+        raise ValueError("检索查询不能为空。")
+
     raw_chunks = values.get("study_chunks")
+    legacy_ids: dict[str, str] = {}
     if raw_chunks:
         if not isinstance(raw_chunks, list):
             raise ValueError("study_chunks 必须是列表。")
@@ -154,52 +171,92 @@ def retrieve_study_sources(
             ]
         except (TypeError, ValidationError, ValueError) as exc:
             raise ValueError("study_chunks 包含无效的 Chunk。") from exc
-        ranked_with_order = [
-            (
-                order,
-                RetrievedStudySource(
-                    source_id=chunk.chunk_id,
-                    text=chunk.text,
-                    score=_relevance(query, chunk.text),
-                    source_name=chunk.source_name,
-                    source_uri=chunk.source_uri,
-                    source_type=chunk.source_type,
-                    location=chunk.location,
-                    chunk_hash=chunk.chunk_hash,
-                ),
-            )
-            for order, chunk in enumerate(indexed_chunks)
-        ]
     else:
         material = normalize_study_material(str(values.get("study_material", "")))
         if not material:
             if raw_chunks not in (None, []):
                 raise ValueError("study_chunks 必须是列表。")
-            return []
-        ranked_with_order = [
-            (
-                order,
-                RetrievedStudySource(
-                    source_id=chunk.source_id,
-                    text=chunk.text,
-                    score=_relevance(query, chunk.text),
-                ),
+            indexed_chunks = []
+        else:
+            indexed_chunks, legacy_ids = _legacy_study_chunks(
+                material,
+                chunk_size=chunk_size,
+                overlap=overlap,
             )
-            for order, chunk in enumerate(
-                chunk_study_material(
-                    material,
-                    chunk_size=chunk_size,
-                    overlap=overlap,
-                )
-            )
-        ]
 
-    positive = [
-        (order, source)
-        for order, source in ranked_with_order
-        if source.score > 0
-    ]
-    positive.sort(
-        key=lambda item: (-item[1].score, item[0])
+    engine = retriever or HybridStudyRetriever(
+        settings=RagSettings(top_k=top_k)
     )
-    return [source for _, source in positive[:top_k]]
+    result = engine.retrieve(
+        query,
+        indexed_chunks,
+        rewrite_context=values,
+    )
+    if not legacy_ids:
+        return result
+    return HybridRetrievalResult(
+        sources=[
+            source.model_copy(
+                update={
+                    "source_id": legacy_ids.get(
+                        source.source_id, source.source_id
+                    ),
+                    "source_name": None,
+                    "source_uri": None,
+                    "source_type": None,
+                    "location": None,
+                    "chunk_hash": None,
+                }
+            )
+            for source in result.sources
+        ],
+        report=result.report,
+    )
+
+
+def _legacy_study_chunks(
+    material: str,
+    *,
+    chunk_size: int,
+    overlap: int,
+) -> tuple[list[StudyChunkRecord], dict[str, str]]:
+    content_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    source_key = "legacy:pasted-text"
+    source_id = hashlib.sha256(source_key.encode("utf-8")).hexdigest()
+    records: list[StudyChunkRecord] = []
+    public_ids: dict[str, str] = {}
+    for index, chunk in enumerate(
+        chunk_study_material(
+            material,
+            chunk_size=chunk_size,
+            overlap=overlap,
+        ),
+        start=1,
+    ):
+        chunk_hash = hashlib.sha256(
+            f"{source_id}\0{index}\0{chunk.text}".encode("utf-8")
+        ).hexdigest()
+        chunk_id = hashlib.sha256(
+            f"{source_id}\0{chunk_hash}".encode("utf-8")
+        ).hexdigest()
+        public_ids[chunk_id] = chunk.source_id
+        records.append(
+            StudyChunkRecord(
+                source_id=source_id,
+                source_key=source_key,
+                source_type="text",
+                source_name="pasted-text.txt",
+                source_uri="pasted-text.txt",
+                mime_type="text/plain",
+                content_hash=content_hash,
+                location_type="paragraph",
+                location=f"chunk {index}",
+                chunk_id=chunk_id,
+                chunk_hash=chunk_hash,
+                chunk_index=index,
+                char_start=0,
+                char_end=len(chunk.text),
+                text=chunk.text,
+            )
+        )
+    return records, public_ids

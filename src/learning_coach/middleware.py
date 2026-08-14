@@ -1,5 +1,5 @@
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain.agents import create_agent
@@ -23,8 +23,14 @@ from learning_coach.context import (
     TeachingContext,
     build_teaching_context,
 )
-from learning_coach.retrieval import retrieve_study_sources
-from learning_coach.schemas import ContextReport, GroundedTeaching, StudySource
+from learning_coach.hybrid_rag import HybridRetrievalResult, HybridStudyRetriever
+from learning_coach.retrieval import retrieve_study_sources_with_report
+from learning_coach.schemas import (
+    ContextReport,
+    GroundedTeaching,
+    RetrievalReport,
+    StudySource,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,7 @@ class TeachingAgentRuntime:
     learning: LearningRuntimeContext
     teaching: TeachingContext
     task: dict[str, Any]
+    retriever: HybridStudyRetriever = field(default_factory=HybridStudyRetriever)
 
 
 @tool
@@ -195,14 +202,23 @@ def search_runtime_material(
             "location": source.location,
             "chunk_hash": source.chunk_hash,
         }
-        for source in retrieve_study_sources(
-            {
-                "query": query,
-                "study_material": runtime.task.get("study_material", ""),
-                "study_chunks": runtime.task.get("study_chunks", []),
-            }
-        )
+        for source in search_runtime_material_result(runtime, query).sources
     ]
+
+
+def search_runtime_material_result(
+    runtime: TeachingAgentRuntime,
+    query: str,
+) -> HybridRetrievalResult:
+    """Return sources and the bounded trace for one Agent tool query."""
+
+    return retrieve_study_sources_with_report(
+        {
+            "query": query,
+            **runtime.task,
+        },
+        retriever=runtime.retriever,
+    )
 
 
 def _supports_agent_tools(model: Any) -> bool:
@@ -231,11 +247,13 @@ class ContextEngineeredTeaching:
         fallback_runnable: Runnable[dict[str, Any], GroundedTeaching],
         advanced_model: Any | None = None,
         agent_fallback_model: Any | None = None,
+        retriever: HybridStudyRetriever | None = None,
     ) -> None:
         self.primary_model = primary_model
         self.advanced_model = advanced_model
         self.agent_fallback_model = agent_fallback_model
         self.fallback_runnable = fallback_runnable
+        self.retriever = retriever or HybridStudyRetriever()
 
     def invoke(
         self,
@@ -260,13 +278,14 @@ class ContextEngineeredTeaching:
             },
             context=agent_runtime,
         )
-        text, sources, report = self._agent_result(
+        text, sources, report, retrieval_report = self._agent_result(
             result, agent_runtime, selected_tier
         )
         return GroundedTeaching(
             text=text,
             sources=sources,
             context_report=report,
+            retrieval_report=retrieval_report,
         )
 
     def stream(
@@ -314,7 +333,7 @@ class ContextEngineeredTeaching:
                 emitted_text = True
                 yield GroundedTeaching(text=text)
 
-        text, sources, report = self._agent_result(
+        text, sources, report, retrieval_report = self._agent_result(
             final_state, agent_runtime, selected_tier
         )
         if not emitted_text:
@@ -323,6 +342,7 @@ class ContextEngineeredTeaching:
             text="",
             sources=sources,
             context_report=report,
+            retrieval_report=retrieval_report,
         )
 
     def _agent_result(
@@ -330,7 +350,7 @@ class ContextEngineeredTeaching:
         result: dict[str, Any],
         agent_runtime: TeachingAgentRuntime,
         selected_tier: str,
-    ) -> tuple[str, list[StudySource], ContextReport]:
+    ) -> tuple[str, list[StudySource], ContextReport, RetrievalReport | None]:
         messages = list(result.get("messages", []))
         ai_messages = [
             message for message in messages if isinstance(message, AIMessage)
@@ -346,14 +366,16 @@ class ContextEngineeredTeaching:
             for call in message.tool_calls
         ]
         sources: list[StudySource] = []
+        retrieval_report: RetrievalReport | None = None
         for message in ai_messages:
             for call in message.tool_calls:
                 if call["name"] != search_study_material.name:
                     continue
-                for source in search_runtime_material(
+                retrieval = search_runtime_material_result(
                     agent_runtime, str(call.get("args", {}).get("query", ""))
-                ):
-                    candidate = StudySource.model_validate(source)
+                )
+                retrieval_report = retrieval.report
+                for candidate in retrieval.sources:
                     if all(
                         existing.source_id != candidate.source_id
                         for existing in sources
@@ -375,6 +397,7 @@ class ContextEngineeredTeaching:
                 tool_calls=len(used_tools),
                 summary_applied=bool(agent_runtime.teaching.context_summary),
             ),
+            retrieval_report,
         )
 
     def _stream_lcel(
@@ -407,6 +430,7 @@ class ContextEngineeredTeaching:
             learning=runtime,
             teaching=teaching,
             task=dict(task),
+            retriever=self.retriever,
         )
         selected_model = choose_teaching_model(
             agent_runtime, self.primary_model, self.advanced_model

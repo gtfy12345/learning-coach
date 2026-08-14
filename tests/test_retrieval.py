@@ -7,6 +7,7 @@ from learning_coach.retrieval import (
     chunk_study_material,
     normalize_study_material,
     retrieve_study_sources,
+    retrieve_study_sources_with_report,
 )
 from learning_coach.schemas import StudySource
 
@@ -136,3 +137,20 @@ def test_retrieval_rejects_invalid_serialized_chunk() -> None:
                 "study_chunks": [{"text": "missing metadata"}],
             }
         )
+
+
+def test_retrieval_report_traces_hybrid_scores_and_bounded_attempts() -> None:
+    result = retrieve_study_sources_with_report(
+        {
+            "query": "怎么合并并行状态",
+            "topic": "LangGraph Reducer",
+            "diagnostic_focus": "Reducer 合并",
+            "study_material": "Reducer 决定 LangGraph 并行状态如何合并。",
+        }
+    )
+
+    assert result.sources
+    assert result.sources[0].retrieval_score is not None
+    assert result.report.original_query == "怎么合并并行状态"
+    assert 1 <= len(result.report.attempts) <= 2
+    assert result.report.quality in {"sufficient", "insufficient"}

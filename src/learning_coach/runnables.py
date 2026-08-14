@@ -17,9 +17,14 @@ from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from learning_coach.context import LearningRuntimeContext
+from learning_coach.hybrid_rag import (
+    HybridRetrievalResult,
+    HybridStudyRetriever,
+    create_hybrid_retriever,
+)
 from learning_coach.middleware import ContextEngineeredTeaching
 from learning_coach.model import LearningCoachModels
-from learning_coach.retrieval import retrieve_study_sources
+from learning_coach.retrieval import retrieve_study_sources_with_report
 from learning_coach.schemas import (
     Assessment,
     Diagnostic,
@@ -152,31 +157,24 @@ def _teaching_query(values: TaskInput) -> str:
     ).strip()
 
 
-def _retrieve_teaching_sources(values: TaskInput) -> list[StudySource]:
-    retrieved = retrieve_study_sources(
+def _retrieve_teaching_evidence(
+    values: TaskInput,
+    retriever: HybridStudyRetriever,
+) -> HybridRetrievalResult | None:
+    if not values.get("study_material") and not values.get("study_chunks"):
+        return None
+    return retrieve_study_sources_with_report(
         {
             "query": _teaching_query(values),
-            "study_material": values.get("study_material", ""),
-            "study_chunks": values.get("study_chunks", []),
-        }
+            **values,
+        },
+        retriever=retriever,
     )
-    return [
-        StudySource(
-            source_id=source.source_id,
-            text=source.text,
-            score=source.score,
-            source_name=source.source_name,
-            source_uri=source.source_uri,
-            source_type=source.source_type,
-            location=source.location,
-            chunk_hash=source.chunk_hash,
-        )
-        for source in retrieved
-    ]
 
 
 def _format_study_context(values: TaskInput) -> str:
-    sources = values.get("sources", [])
+    retrieval = values.get("retrieval")
+    sources = retrieval.sources if isinstance(retrieval, HybridRetrievalResult) else []
     if not sources:
         return "没有可用参考资料，请基于通用知识讲解，并避免声称引用了资料。"
     return "\n\n".join(
@@ -225,18 +223,26 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
         **kwargs: Any,
     ) -> Iterator[GroundedTeaching]:
         sources: list[StudySource] | None = None
+        retrieval_report: Any = None
+        retrieval_report_seen = False
         buffered_text: list[str] = []
         sources_emitted = False
         for chunk in input:
             if "sources" in chunk:
                 sources = list(chunk["sources"])
+            if "retrieval_report" in chunk:
+                retrieval_report = chunk["retrieval_report"]
+                retrieval_report_seen = True
             if "text" in chunk:
                 buffered_text.append(str(chunk["text"]))
-            if sources is not None and buffered_text:
+            if sources is not None and retrieval_report_seen and buffered_text:
                 for text in buffered_text:
                     yield GroundedTeaching(
                         text=text,
                         sources=sources if not sources_emitted else [],
+                        retrieval_report=(
+                            retrieval_report if not sources_emitted else None
+                        ),
                     )
                     sources_emitted = True
                 buffered_text.clear()
@@ -244,6 +250,9 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
             yield GroundedTeaching(
                 text=text,
                 sources=(sources or []) if not sources_emitted else [],
+                retrieval_report=(
+                    retrieval_report if not sources_emitted else None
+                ),
             )
             sources_emitted = True
 
@@ -254,18 +263,26 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
         **kwargs: Any,
     ) -> AsyncIterator[GroundedTeaching]:
         sources: list[StudySource] | None = None
+        retrieval_report: Any = None
+        retrieval_report_seen = False
         buffered_text: list[str] = []
         sources_emitted = False
         async for chunk in input:
             if "sources" in chunk:
                 sources = list(chunk["sources"])
+            if "retrieval_report" in chunk:
+                retrieval_report = chunk["retrieval_report"]
+                retrieval_report_seen = True
             if "text" in chunk:
                 buffered_text.append(str(chunk["text"]))
-            if sources is not None and buffered_text:
+            if sources is not None and retrieval_report_seen and buffered_text:
                 for text in buffered_text:
                     yield GroundedTeaching(
                         text=text,
                         sources=sources if not sources_emitted else [],
+                        retrieval_report=(
+                            retrieval_report if not sources_emitted else None
+                        ),
                     )
                     sources_emitted = True
                 buffered_text.clear()
@@ -273,6 +290,9 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
             yield GroundedTeaching(
                 text=text,
                 sources=(sources or []) if not sources_emitted else [],
+                retrieval_report=(
+                    retrieval_report if not sources_emitted else None
+                ),
             )
             sources_emitted = True
 
@@ -280,10 +300,13 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
 def _grounded_teaching_chain(
     prompt: ChatPromptTemplate,
     model: Any,
+    retriever: HybridStudyRetriever,
 ) -> Runnable[TaskInput, GroundedTeaching]:
     retrieval = RunnableParallel(
         task=RunnablePassthrough(),
-        sources=RunnableLambda(_retrieve_teaching_sources),
+        retrieval=RunnableLambda(
+            lambda values: _retrieve_teaching_evidence(values, retriever)
+        ),
     )
     assign_context = RunnableAssign(
         RunnableParallel(
@@ -302,7 +325,20 @@ def _grounded_teaching_chain(
         assign_context,
         RunnableParallel(
             text=answer,
-            sources=RunnableLambda(lambda values: values["sources"]),
+            sources=RunnableLambda(
+                lambda values: (
+                    values["retrieval"].sources
+                    if isinstance(values["retrieval"], HybridRetrievalResult)
+                    else []
+                )
+            ),
+            retrieval_report=RunnableLambda(
+                lambda values: (
+                    values["retrieval"].report
+                    if isinstance(values["retrieval"], HybridRetrievalResult)
+                    else None
+                )
+            ),
         ),
         GroundedTeachingParser(),
     )
@@ -394,7 +430,13 @@ class LearningCoachRunnables:
         return legend + self.task(name).get_graph().draw_mermaid()
 
     @classmethod
-    def from_models(cls, models: LearningCoachModels) -> "LearningCoachRunnables":
+    def from_models(
+        cls,
+        models: LearningCoachModels,
+        *,
+        retriever: HybridStudyRetriever | None = None,
+    ) -> "LearningCoachRunnables":
+        hybrid_retriever = retriever or create_hybrid_retriever()
         diagnostic_adapter = RunnableLambda(_diagnostic_input)
         diagnostic_primary = _structured_chain(
             DIAGNOSTIC_PROMPT,
@@ -424,11 +466,15 @@ class LearningCoachRunnables:
             else None
         )
 
-        teaching_primary = _grounded_teaching_chain(TEACHING_PROMPT, models.chat)
+        teaching_primary = _grounded_teaching_chain(
+            TEACHING_PROMPT, models.chat, hybrid_retriever
+        )
         quiz_primary = _text_chain(QUIZ_PROMPT, models.chat)
         summary_primary = _text_chain(SUMMARY_PROMPT, models.chat)
         teaching_fallback = (
-            _grounded_teaching_chain(TEACHING_PROMPT, models.chat_fallback)
+            _grounded_teaching_chain(
+                TEACHING_PROMPT, models.chat_fallback, hybrid_retriever
+            )
             if models.chat_fallback is not None
             else None
         )
@@ -471,5 +517,6 @@ class LearningCoachRunnables:
                 advanced_model=models.advanced_chat,
                 agent_fallback_model=models.chat_fallback,
                 fallback_runnable=teaching_task,
+                retriever=hybrid_retriever,
             ),
         )

@@ -16,6 +16,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator
 
 from learning_coach.graph import build_learning_graph
+from learning_coach.hybrid_rag import RagSettings
 from learning_coach.ingestion import (
     MAX_SINGLE_MATERIAL_BYTES,
     IngestionReport,
@@ -33,7 +34,7 @@ from learning_coach.context import (
 from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
 from learning_coach.retrieval import normalize_study_material
-from learning_coach.schemas import ContextReport, StudySource
+from learning_coach.schemas import ContextReport, RetrievalReport, StudySource
 
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
@@ -99,6 +100,7 @@ class SessionView(BaseModel):
     context_summary: str | None = None
     context_report: ContextReport | None = None
     ingestion_report: IngestionReport | None = None
+    retrieval_report: RetrievalReport | None = None
     question: str | None = None
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
@@ -118,6 +120,7 @@ class PublicModelConfig(BaseModel):
     advanced_chat_model_id: str | None = None
     chat_fallback_model_id: str | None = None
     assessment_fallback_model_id: str | None = None
+    embedding_model_id: str | None = None
     accepts_images: bool | None = None
     run_timeout_seconds: float | None = None
     context_model_call_limit: int | None = None
@@ -149,6 +152,7 @@ class LearningSessionService:
         self._advanced_chat_model_id: str | None = None
         self._chat_fallback_model_id = chat_fallback_model_id
         self._assessment_fallback_model_id = assessment_fallback_model_id
+        self._embedding_model_id: str | None = None
         self._run_timeout_seconds = (
             run_timeout_seconds
             if run_timeout_seconds is not None
@@ -196,6 +200,14 @@ class LearningSessionService:
                 settings.assessment_fallback_model_id
             )
 
+        if self._embedding_model_id is None:
+            try:
+                self._embedding_model_id = RagSettings.from_environ(
+                    os.environ
+                ).embedding_model_id
+            except (RuntimeError, ValueError) as exc:
+                return PublicModelConfig(configured=False, error=str(exc))
+
         assert self._models is not None
         return PublicModelConfig(
             configured=True,
@@ -204,6 +216,7 @@ class LearningSessionService:
             advanced_chat_model_id=self._advanced_chat_model_id,
             chat_fallback_model_id=self._chat_fallback_model_id,
             assessment_fallback_model_id=self._assessment_fallback_model_id,
+            embedding_model_id=self._embedding_model_id,
             accepts_images=self._models.accepts_images,
             run_timeout_seconds=self._run_timeout_seconds,
             context_model_call_limit=self._context_settings.model_call_limit,
@@ -452,6 +465,7 @@ class LearningSessionService:
                 context_summary=state.get("context_summary"),
                 context_report=state.get("context_report"),
                 ingestion_report=state.get("ingestion_report"),
+                retrieval_report=state.get("retrieval_report"),
                 question=str(payload.get("question", "")),
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
@@ -475,6 +489,7 @@ class LearningSessionService:
             context_summary=state.get("context_summary"),
             context_report=state.get("context_report"),
             ingestion_report=state.get("ingestion_report"),
+            retrieval_report=state.get("retrieval_report"),
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),

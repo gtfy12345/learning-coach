@@ -26,9 +26,9 @@
 
 ## Phase 4: 教学与 Web 集成测试
 
-- [ ] 4.1 LCEL、Middleware 与共享 Retriever 测试
-- [ ] 4.2 State、SSE、Web 报告和安全展示测试
-- [ ] 4.3 README、环境变量与公开边界测试
+- [x] 4.1 LCEL、Middleware 与共享 Retriever 测试
+- [x] 4.2 State、SSE、Web 报告和安全展示测试
+- [x] 4.3 README、环境变量与公开边界测试
 
 ## Phase 5: 完整回归与文章验证
 

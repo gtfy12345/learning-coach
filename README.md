@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering 与多模态学习资料摄取扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取与自校正 Hybrid RAG 扩展：
 
 ```mermaid
 flowchart LR
@@ -33,7 +33,10 @@ flowchart LR
 - 由 Prompt、模型和解析器组成的五类 LCEL Runnable
 - 教学模型与评价模型的可选完整任务回退
 - `RunnableSequence`、`RunnableParallel`、`RunnablePassthrough`、`RunnableAssign` 和 `RunnableLambda` 高级组合
-- 基于用户粘贴文本的确定性内存检索、带来源讲解和 Runnable 图导出
+- 默认离线哈希 Embedding、可选 LangChain Provider Embedding 与文档向量缓存
+- BM25 与 Dense 双路召回、RRF 融合、确定性重排和带来源讲解
+- 证据质量判断、上下文感知查询改写和最多两次的自校正检索
+- 可追溯的通道分数、检索尝试与安全降级报告，以及 Runnable 图导出
 - Runnable 的同步、异步、批处理与流式执行，以及 Web SSE、取消和超时
 - 默认关闭的 LangSmith 任务追踪标签与安全元数据
 - `LearningRuntimeContext` 中一次会话不可变的学习目标与模型/工具预算
@@ -135,6 +138,7 @@ PYTHONPATH=src python -m learning_coach web
 - 粘贴纯文本，或上传多份论文、书籍、课件、图片与代码资料
 - 输入一个或多个课程网页 URL，并在讲解阶段显示文件名、页码、章节、幻灯片或代码行范围
 - 显示本次摄取的新增、更新、跳过和 Chunk 统计
+- 显示 Hybrid RAG 尝试次数、证据质量、查询改写和最终来源相关度
 - 提交诊断回答，查看针对性讲解和迁移练习
 - 提交练习答案，查看结构化评分、反馈和知识缺口
 - 未达到 80 分时自动补讲并继续出题，最多评价两次
@@ -150,11 +154,11 @@ PYTHONPATH=src python -m learning_coach web
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/health` | 服务健康检查 |
-| `GET /api/config` | 返回脱敏后的主/高级/备用模型配置、图片能力和预算上限 |
+| `GET /api/config` | 返回脱敏后的主/高级/备用模型、Embedding 标识、图片能力和预算上限 |
 | `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
-| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、state 和 done 事件 |
+| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、state 和 done 事件 |
 
 两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
 
@@ -218,7 +222,7 @@ flowchart LR
     D --> S[LocationAwareSplitter]
     S --> H[Metadata + SHA-256]
     H --> X[会话级增量索引]
-    X --> R[确定性词法检索]
+    X --> R[Hybrid RAG]
     R --> T[LCEL 或教学 Agent]
 ```
 
@@ -243,6 +247,40 @@ Loader 统一输出 `Document(page_content, metadata)`，不同格式负责提�
 同一来源和 `content_hash` 再次摄取时标记为 skipped；同名来源内容变化时只替换该来源；`full` 同步可以删除本轮缺失来源。当前索引只保存在会话内存中，不写入磁盘、SQLite 或外部向量数据库。
 
 安全边界：单份资料最大 10 MiB，默认最多 10 个资料、其中最多 3 张图片，总上传最大 30 MiB；网页响应最大 2 MiB。网页 Loader 只允许 http/https，并对初始 URL、DNS 结果和每次重定向执行 SSRF 检查，拒绝 loopback、私网、链路本地和保留地址。代码只读取，不执行。图片每张最多调用视觉模型一次；主模型没有声明图片能力时明确失败。
+
+### 自校正 Hybrid RAG
+
+第 6 阶段让检索从“一次词面匹配”变成有质量判断、可追溯且必然终止的闭环。多模态摄取生成的 Chunk 同时进入 BM25 关键词召回和 Dense 召回；两路结果通过 RRF 按名次融合，再根据查询覆盖率、完整短语、双通道一致性和通道峰值做确定性重排。
+
+```mermaid
+flowchart LR
+    Q[教学查询] --> K[BM25 关键词召回]
+    Q --> D[Dense 余弦召回]
+    K --> F[RRF 融合]
+    D --> F
+    F --> R[确定性重排]
+    R --> J{证据质量足够?}
+    J -->|是| O[返回来源与检索报告]
+    J -->|否，首轮| W[结合目标、诊断和最近错误改写]
+    W --> K
+    J -->|否，第二轮| O
+```
+
+默认配置无需新的 API Key，也不会把资料发送给 Embedding Provider：
+
+```dotenv
+EMBEDDING_MODEL_ID=local:hash-v1
+```
+
+`local:hash-v1` 是 256 维、确定性的特征哈希向量，适合离线演示、可复现测试和中英文词片段相似度；它不是神经语义模型。希望获得 Provider 语义 Embedding 时，可以显式改成 LangChain 支持的 `provider:model`，并安装对应集成、配置凭据：
+
+```dotenv
+EMBEDDING_MODEL_ID=openai:text-embedding-3-small
+```
+
+只有显式选择 Provider Embedding 时，查询和资料 Chunk 才可能发送到相应外部服务并产生费用；应先确认供应商的数据处理规则。文档向量按 `embedding_model_id + chunk_hash` 缓存在当前进程内，最多 2,048 条，不写入 State 或浏览器。Provider 调用、向量维度或非有限值异常时，Dense 通道会降级，BM25 仍继续工作；对外报告只记录 `embedding_unavailable`，不回传异常正文、密钥或向量。
+
+每次最多召回 8 个候选并选出 3 个来源。首轮证据不足时，系统把学习主题、诊断重点、反馈、知识缺口、最近错误和目标加入查询，最多改写一次；第二轮无论质量如何都结束。最终 `RetrievalReport` 记录原始/最终查询、是否改写、证据质量、Embedding 标识和每轮候选数量，`StudySource` 记录 BM25、Dense、RRF 与重排分数。Web 只显示尝试次数、质量、是否改写和最终来源相关度，不显示未选中正文或向量。
 
 也可以把模型切换到 Google Gemini：
 
@@ -349,7 +387,7 @@ questions = tasks.quiz.batch(
 flowchart LR
     I[教学任务输入] --> P[RunnableParallel]
     P --> K[RunnablePassthrough 保留任务]
-    P --> R[RunnableLambda 词法检索]
+    P --> R[RunnableLambda Hybrid 检索]
     K --> A[RunnableAssign 补充上下文]
     R --> A
     A --> S[RunnableSequence]
@@ -357,7 +395,7 @@ flowchart LR
     O --> G[讲解文本与来源]
 ```
 
-词法 Retriever 不需要 Embedding 或向量数据库：它优先检索多模态摄取管线生成的结构化 Chunk，同时兼容原来最多 50,000 字的粘贴文本；评分考虑英文词元与中文连续字符片段，最多返回三个正相关片段。它不是语义向量检索或下一阶段 Hybrid RAG 的替代品。
+Hybrid Retriever 优先检索多模态摄取管线生成的结构化 Chunk，同时兼容原来最多 50,000 字的粘贴文本。LCEL 路径与讲解 Agent 工具共享同一个 Retriever；最终来源和报告写入 `GroundedTeaching`、LangGraph State，并通过 Web JSON/SSE 返回。
 
 可以导出任一任务的 Mermaid 组合图：
 
@@ -421,6 +459,7 @@ learning-coach/
 │       ├── cli_models.py
 │       ├── context.py
 │       ├── graph.py
+│       ├── hybrid_rag.py
 │       ├── ingestion.py
 │       ├── loaders.py
 │       ├── media.py
@@ -442,6 +481,7 @@ learning-coach/
     ├── test_cli_models.py
     ├── test_context.py
     ├── test_graph.py
+    ├── test_hybrid_rag.py
     ├── test_ingestion.py
     ├── test_loaders.py
     ├── test_media.py
@@ -456,11 +496,12 @@ learning-coach/
 - `context.py`：定义 Runtime Context、预算校验、掌握度分层、最近错误和确定性摘要。
 - `ingestion.py`：定义资料输入、Metadata、位置感知 Splitter、SHA-256 和会话级增量索引。
 - `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
+- `hybrid_rag.py`：实现本地/Provider Embedding、BM25、Dense、RRF、重排、质量判断和有界查询改写。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
-- `retrieval.py`：检索结构化资料 Chunk，并兼容原有粘贴纯文本切块。
+- `retrieval.py`：把结构化资料 Chunk 和原有粘贴纯文本适配到共享 Hybrid Retriever。
 - `graph.py`：节点之间的固定边、条件边和循环。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
@@ -504,7 +545,9 @@ learning-coach/
 - 高级教学模型只根据显式掌握度和最近错误切换；它不是自动质量评审，也不会改变评价模型。
 - CLI Provider 不支持 Tool Calling 时走 LCEL 兼容路径；只有 profile 明确声明工具能力的 `BaseChatModel` 才进入局部 Agent 循环。
 - Context Report 记录模式、工具名和调用计数，不保存资料正文或学习者回答；掌握度仍来自模型评价，不能视为客观测量。
-- 当前 Retriever 是确定性词法匹配，不是语义向量检索；没有重排、查询改写或证据质量判断。
+- 默认 `local:hash-v1` 是离线特征哈希，不等同于神经语义 Embedding；语义质量取决于显式选择的 Provider 模型。
+- Hybrid RAG 只检索当前会话内存中的 Chunk；候选上限为 8、最终来源上限为 3、检索上限为两次，不会自动扩展到外部知识库。
+- 确定性质量阈值是检索启发式指标，不保证资料事实正确，也不能替代人工核验；证据不足的第二轮仍会按上限终止。
 - SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。

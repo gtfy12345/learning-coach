@@ -266,7 +266,13 @@ def test_graph_streams_task_status_text_and_sources_before_final_state() -> None
     assert source_event["sources"][0]["source_id"].startswith(
         "material-1#chunk-"
     )
+    retrieval_event = next(
+        event for event in custom if event["event"] == "retrieval"
+    )
+    assert retrieval_event["report"]["embedding_model_id"] == "local:hash-v1"
+    assert len(retrieval_event["report"]["attempts"]) <= 2
     assert values[-1]["explanation"] == "默认更新会覆盖旧值，Reducer 可以定义列表合并规则。"
+    assert values[-1]["retrieval_report"] == retrieval_event["report"]
     assert next(
         part["interrupts"] for part in parts if part.get("interrupts")
     )[0].value["kind"] == "quiz"

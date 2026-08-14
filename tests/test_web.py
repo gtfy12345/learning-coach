@@ -198,6 +198,9 @@ def test_web_session_grounds_teaching_in_optional_study_material() -> None:
     payload = taught.json()
     assert payload["sources"]
     assert payload["sources"][0]["source_id"].startswith("material-1#chunk-")
+    assert payload["retrieval_report"]["embedding_model_id"] == "local:hash-v1"
+    assert len(payload["retrieval_report"]["attempts"]) <= 2
+    assert "vector" not in json.dumps(payload["retrieval_report"])
     assert "retry 或 finish" in model.text_messages[0][1].content
 
 
@@ -373,6 +376,7 @@ def test_config_endpoint_never_exposes_credentials() -> None:
         "configured": True,
         "chat_model_id": "fake:coach",
         "assessment_model_id": "fake:assessment",
+        "embedding_model_id": "local:hash-v1",
         "accepts_images": True,
         "run_timeout_seconds": 120.0,
         "context_model_call_limit": 3,
@@ -405,6 +409,7 @@ def test_config_endpoint_exposes_fallback_ids_without_credentials() -> None:
         "assessment_model_id": "fake:assessment",
         "chat_fallback_model_id": "fake:coach-fallback",
         "assessment_fallback_model_id": "fake:assessment-fallback",
+        "embedding_model_id": "local:hash-v1",
         "accepts_images": True,
         "run_timeout_seconds": 120.0,
         "context_model_call_limit": 3,
@@ -494,6 +499,7 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
     assert "status" in event_names
     assert "token" in event_names
     assert "sources" in event_names
+    assert "retrieval" in event_names
     assert event_names[-2:] == ["state", "done"]
     teaching_text = "".join(
         payload["text"]
@@ -505,6 +511,10 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
     )
     assert teaching_text == final_state["explanation"]
     assert final_state["sources"]
+    retrieval_event = next(
+        payload for event, payload in answer_events if event == "retrieval"
+    )
+    assert final_state["retrieval_report"] == retrieval_event["report"]
 
 
 class SlowChatModel(FakeChatModel):
@@ -561,6 +571,7 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert "multiple" in response.text
     assert 'id="source-urls"' in response.text
     assert 'id="context-ingestion"' in response.text
+    assert 'id="context-retrieval"' in response.text
     assert 'id="learning-goal"' in response.text
     assert 'id="context-insight"' in response.text
     assert 'id="cancel-run"' in response.text
@@ -577,6 +588,10 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert "ingestion_report" in app_script
     assert "context_summary" in app_script
     assert "context_report" in app_script
+    assert "retrieval_report" in app_script
+    assert 'eventName === "retrieval"' in app_script
+    assert "retrieval_score?.rerank" in app_script
+    assert "config.embedding_model_id" in app_script
 
 
 def test_cancelled_stream_does_not_register_an_incomplete_session() -> None:

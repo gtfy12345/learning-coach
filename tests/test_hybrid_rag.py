@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from learning_coach.hybrid_rag import (
     assess_evidence_quality,
     bm25_retrieve,
     create_embeddings,
+    create_hybrid_retriever,
     dense_retrieve,
     reciprocal_rank_fusion,
     rerank_candidates,
@@ -130,6 +132,20 @@ def test_embedding_factory_initializes_explicit_provider_model() -> None:
     assert calls == ["openai:text-embedding-3-small"]
 
 
+def test_retriever_factory_uses_the_same_explicit_embedding_configuration() -> None:
+    provider = LocalHashEmbeddings(dimensions=32)
+    calls: list[str] = []
+
+    retriever = create_hybrid_retriever(
+        {"EMBEDDING_MODEL_ID": "openai:text-embedding-3-small"},
+        initializer=lambda model_id: calls.append(model_id) or provider,
+    )
+
+    assert retriever.settings.embedding_model_id == "openai:text-embedding-3-small"
+    assert retriever.embeddings is provider
+    assert calls == ["openai:text-embedding-3-small"]
+
+
 @pytest.mark.parametrize(
     "model_id",
     ["", "hash-v1", "local:unknown"],
@@ -137,6 +153,27 @@ def test_embedding_factory_initializes_explicit_provider_model() -> None:
 def test_embedding_settings_reject_invalid_model_ids(model_id: str) -> None:
     with pytest.raises(RuntimeError, match="EMBEDDING_MODEL_ID"):
         RagSettings.from_environ({"EMBEDDING_MODEL_ID": model_id})
+
+
+def test_public_docs_describe_hybrid_rag_configuration_and_boundaries() -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+
+    for term in (
+        "自校正 Hybrid RAG",
+        "BM25",
+        "Dense",
+        "RRF",
+        "证据质量",
+        "最多改写一次",
+        "embedding_unavailable",
+        "不回传异常正文、密钥或向量",
+        "local:hash-v1",
+    ):
+        assert term in readme
+    assert "EMBEDDING_MODEL_ID=local:hash-v1" in env_example
+    assert "EMBEDDING_MODEL_ID=openai:text-embedding-3-small" in env_example
 
 
 def test_retrieval_schemas_are_bounded_and_backward_compatible() -> None:

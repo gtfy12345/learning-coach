@@ -231,13 +231,11 @@ def test_context_engineered_agent_executes_tools_and_reports_budgets() -> None:
     )
 
     assert result.text == "条件边应读取 State，并显式限制循环次数。"
-    assert result.sources == [
-        StudySource(
-            source_id="material-1#chunk-1",
-            text=task["study_material"],
-            score=result.sources[0].score,
-        )
-    ]
+    assert result.sources[0].source_id == "material-1#chunk-1"
+    assert result.sources[0].text == task["study_material"]
+    assert result.sources[0].retrieval_score is not None
+    assert result.retrieval_report is not None
+    assert len(result.retrieval_report.attempts) <= 2
     assert result.context_report == ContextReport(
         mode="agent",
         model_tier="primary",
@@ -283,6 +281,7 @@ def test_context_engineered_agent_streams_text_and_finishes_with_report() -> Non
         "条件边应读取 State，并显式限制循环次数。"
     )
     assert chunks[-1].sources[0].source_id == "material-1#chunk-1"
+    assert chunks[-1].retrieval_report is not None
     assert chunks[-1].context_report == ContextReport(
         mode="agent",
         model_tier="primary",

@@ -301,6 +301,10 @@ Reducer 决定 LangGraph 并行节点更新同一 State 字段时如何合并。
     assert result.text == "Reducer 决定并行更新如何合并。"
     assert result.sources
     assert result.sources[0].source_id.startswith("material-1#chunk-")
+    assert result.sources[0].retrieval_score is not None
+    assert result.retrieval_report is not None
+    assert result.retrieval_report.original_query.startswith("LangGraph Reducer")
+    assert len(result.retrieval_report.attempts) <= 2
     teaching_message = model.text_messages[-1][1].content
     assert "参考资料" in teaching_message
     assert "并行节点" in teaching_message
@@ -381,6 +385,7 @@ def test_task_interfaces_support_async_batch_stream_and_graph_export() -> None:
     assert "".join(chunk.text for chunk in async_chunks) == sync_result.text
     assert [result.text for result in batch] == ["第一段第二段"] * 2
     assert all(chunks[0].sources)
+    assert chunks[0].retrieval_report is not None
     assert all(not chunk.sources for chunk in chunks[1:])
     assert tasks.task("quiz") is tasks.quiz
     assert "graph TD" in tasks.draw_mermaid("teaching")

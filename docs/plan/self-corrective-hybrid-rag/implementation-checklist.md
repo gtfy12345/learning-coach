@@ -26,9 +26,9 @@
 
 ## Phase 4: LCEL、Middleware、State 与 Web 集成
 
-- [ ] 4.1 接入教学 Runnable 与 Agent 工具
-- [ ] 4.2 接入 LangGraph State、SSE 与 Web 展示
-- [ ] 4.3 同步 README、环境变量与兼容边界
+- [x] 4.1 接入教学 Runnable 与 Agent 工具
+- [x] 4.2 接入 LangGraph State、SSE 与 Web 展示
+- [x] 4.3 同步 README、环境变量与兼容边界
 
 ## Phase 5: 完整验证、复盘与公众号文章
 

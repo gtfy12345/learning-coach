@@ -1,5 +1,6 @@
 import hashlib
 import math
+import os
 import re
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -37,6 +38,15 @@ class RagSettings:
     max_attempts: int = MAX_RAG_ATTEMPTS
 
     def __post_init__(self) -> None:
+        if not self.embedding_model_id.strip():
+            raise ValueError("embedding_model_id 不能为空。")
+        if self.embedding_model_id != DEFAULT_EMBEDDING_MODEL_ID and (
+            ":" not in self.embedding_model_id
+            or self.embedding_model_id.startswith("local:")
+        ):
+            raise ValueError(
+                "embedding_model_id 必须是 local:hash-v1 或 provider:model。"
+            )
         if not 1 <= self.candidate_k <= DEFAULT_RAG_CANDIDATE_K:
             raise ValueError("candidate_k 必须在 1 到 8 之间。")
         if not 1 <= self.top_k <= DEFAULT_RAG_TOP_K:
@@ -677,3 +687,17 @@ def create_embeddings(
 
         initializer = init_embeddings
     return initializer(settings.embedding_model_id)
+
+
+def create_hybrid_retriever(
+    environ: Mapping[str, str] | None = None,
+    *,
+    initializer: Callable[[str], Embeddings] | None = None,
+) -> HybridStudyRetriever:
+    """Create the shared retriever from the explicit process configuration."""
+
+    settings = RagSettings.from_environ(environ if environ is not None else os.environ)
+    return HybridStudyRetriever(
+        settings=settings,
+        embeddings=create_embeddings(settings, initializer=initializer),
+    )
