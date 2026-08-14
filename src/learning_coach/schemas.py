@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Diagnostic(BaseModel):
@@ -33,6 +33,8 @@ class RetrievalScore(BaseModel):
     embedding: float = Field(ge=0, le=1)
     fusion: float = Field(ge=0, le=1)
     rerank: float = Field(ge=0, le=1)
+    graph: float | None = Field(default=None, ge=0, le=1)
+    graph_fusion: float | None = Field(default=None, ge=0, le=1)
 
 
 class RetrievalAttempt(BaseModel):
@@ -87,6 +89,87 @@ class StudySource(BaseModel):
     )
 
 
+ConceptKind = Literal["concept", "technology", "code", "abbreviation"]
+ConceptRelationType = Literal["prerequisite_of", "part_of", "related_to"]
+GraphExtractionMode = Literal["deterministic", "model_augmented", "fallback"]
+
+
+class ConceptNode(BaseModel):
+    """One bounded, provenance-aware concept in the runtime graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    concept_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    name: str = Field(min_length=1, max_length=128)
+    normalized_name: str = Field(min_length=1, max_length=128)
+    kind: ConceptKind
+    aliases: list[str] = Field(default_factory=list, max_length=8)
+    chunk_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ConceptRelation(BaseModel):
+    """A directed, evidenced edge in the runtime concept graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    from_concept_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    to_concept_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    relation_type: ConceptRelationType
+    confidence: float = Field(ge=0, le=1)
+    evidence_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def reject_self_loop(self) -> "ConceptRelation":
+        if self.from_concept_id == self.to_concept_id:
+            raise ValueError("概念关系不能是自环。")
+        return self
+
+
+class PrerequisiteExplanation(BaseModel):
+    """Why one prerequisite is relevant, backed by a bounded graph path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_concept_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    target_name: str = Field(min_length=1, max_length=128)
+    prerequisite_concept_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    prerequisite_name: str = Field(min_length=1, max_length=128)
+    path_concept_ids: list[str] = Field(min_length=2, max_length=4)
+    path_names: list[str] = Field(min_length=2, max_length=4)
+    reason: str = Field(min_length=1, max_length=512)
+    evidence_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_path_shape(self) -> "PrerequisiteExplanation":
+        if len(self.path_concept_ids) != len(self.path_names):
+            raise ValueError("前置路径 ID 与名称数量必须一致。")
+        if self.path_concept_ids[0] != self.prerequisite_concept_id:
+            raise ValueError("前置路径必须从 prerequisite 开始。")
+        if self.path_concept_ids[-1] != self.target_concept_id:
+            raise ValueError("前置路径必须以 target 结束。")
+        return self
+
+
+class GraphRAGReport(BaseModel):
+    """Safe graph projection and prerequisite trace for one teaching run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    extraction_mode: GraphExtractionMode
+    graph_used: bool
+    nodes: list[ConceptNode] = Field(default_factory=list, max_length=80)
+    relations: list[ConceptRelation] = Field(default_factory=list, max_length=160)
+    seed_concepts: list[str] = Field(default_factory=list, max_length=12)
+    expanded_concepts: list[str] = Field(default_factory=list, max_length=24)
+    prerequisites: list[PrerequisiteExplanation] = Field(
+        default_factory=list, max_length=5
+    )
+    hybrid_candidates: int = Field(ge=0, le=8)
+    graph_candidates: int = Field(ge=0, le=24)
+    selected_candidates: int = Field(ge=0, le=3)
+
+
 class ContextReport(BaseModel):
     """Safe, bounded metadata describing one context-engineered teaching run."""
 
@@ -108,3 +191,4 @@ class GroundedTeaching(BaseModel):
     sources: list[StudySource] = Field(default_factory=list)
     context_report: ContextReport | None = None
     retrieval_report: RetrievalReport | None = None
+    graph_report: GraphRAGReport | None = None
