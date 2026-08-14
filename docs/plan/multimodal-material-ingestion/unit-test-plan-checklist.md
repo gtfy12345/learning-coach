@@ -14,9 +14,9 @@
 
 ## Phase 2: Splitter、Hash 与增量索引测试
 
-- [ ] 2.1 位置感知切分与哈希稳定性测试
-- [ ] 2.2 新增、重复、更新与 full cleanup 测试
-- [ ] 2.3 新旧 Retriever、来源 Schema 与排序测试
+- [x] 2.1 位置感知切分与哈希稳定性测试
+- [x] 2.2 新增、重复、更新与 full cleanup 测试
+- [x] 2.3 新旧 Retriever、来源 Schema 与排序测试
 
 ## Phase 3: CLI、Web 与流程集成测试
 

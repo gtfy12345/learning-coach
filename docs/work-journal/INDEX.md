@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-14](2026-08-14.md) | `feat(ingestion): splitter 与增量索引` | #feat |
 | [2026-08-14](2026-08-14.md) | `feat(ingestion): loader 与统一 document 契约` | #feat |
 | [2026-08-13](2026-08-13.md) | `feat(context): 完成上下文工程交付` | #feat |
 | [2026-08-13](2026-08-13.md) | `feat(context): 接入学习流程与 web` | #feat |

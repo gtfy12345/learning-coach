@@ -47,7 +47,13 @@ def search_study_material(
     if not sources:
         return "没有找到相关资料片段。"
     return "\n\n".join(
-        f"[{source['source_id']}] {source['text']}" for source in sources
+        (
+            f"[{source['source_id']}"
+            f"{f' | {source.get('source_name')}' if source.get('source_name') else ''}"
+            f"{f' · {source.get('location')}' if source.get('location') else ''}] "
+            f"{source['text']}"
+        )
+        for source in sources
     )
 
 
@@ -183,11 +189,17 @@ def search_runtime_material(
             "source_id": source.source_id,
             "text": source.text,
             "score": source.score,
+            "source_name": source.source_name,
+            "source_uri": source.source_uri,
+            "source_type": source.source_type,
+            "location": source.location,
+            "chunk_hash": source.chunk_hash,
         }
         for source in retrieve_study_sources(
             {
                 "query": query,
                 "study_material": runtime.task.get("study_material", ""),
+                "study_chunks": runtime.task.get("study_chunks", []),
             }
         )
     ]

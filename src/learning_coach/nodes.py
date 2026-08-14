@@ -85,6 +85,7 @@ class LearningCoachNodes:
             "feedback": state.get("feedback", "暂无"),
             "missing_point": state.get("missing_point", "暂无"),
             "study_material": state.get("study_material", ""),
+            "study_chunks": state.get("study_chunks", []),
             "learning_goal": learning_runtime.learning_goal,
             "mastery_level": state.get("mastery_level", 0),
             "recent_errors": state.get("recent_errors", []),

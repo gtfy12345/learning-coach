@@ -157,6 +157,7 @@ def _retrieve_teaching_sources(values: TaskInput) -> list[StudySource]:
         {
             "query": _teaching_query(values),
             "study_material": values.get("study_material", ""),
+            "study_chunks": values.get("study_chunks", []),
         }
     )
     return [
@@ -164,6 +165,11 @@ def _retrieve_teaching_sources(values: TaskInput) -> list[StudySource]:
             source_id=source.source_id,
             text=source.text,
             score=source.score,
+            source_name=source.source_name,
+            source_uri=source.source_uri,
+            source_type=source.source_type,
+            location=source.location,
+            chunk_hash=source.chunk_hash,
         )
         for source in retrieved
     ]
@@ -174,7 +180,11 @@ def _format_study_context(values: TaskInput) -> str:
     if not sources:
         return "没有可用参考资料，请基于通用知识讲解，并避免声称引用了资料。"
     return "\n\n".join(
-        f"[{source.source_id}] {source.text}"
+        (
+            f"[{source.source_id}"
+            f"{f' | {source.source_name}' if source.source_name else ''}"
+            f"{f' · {source.location}' if source.location else ''}] {source.text}"
+        )
         for source in sources
         if isinstance(source, StudySource)
     )

@@ -4,6 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
+from learning_coach.ingestion import StudyChunkRecord
+
 MAX_STUDY_MATERIAL_CHARS = 50_000
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 120
@@ -28,6 +32,11 @@ class RetrievedStudySource:
     source_id: str
     text: str
     score: float
+    source_name: str | None = None
+    source_uri: str | None = None
+    source_type: str | None = None
+    location: str | None = None
+    chunk_hash: str | None = None
 
 
 def normalize_study_material(value: str | None) -> str:
@@ -129,27 +138,68 @@ def retrieve_study_sources(
     if top_k <= 0:
         raise ValueError("top_k 必须是正整数。")
     query = str(values.get("query", "")).strip()
-    material = normalize_study_material(str(values.get("study_material", "")))
-    if not query or not material:
+    if not query:
         return []
 
-    ranked = [
-        RetrievedStudySource(
-            source_id=chunk.source_id,
-            text=chunk.text,
-            score=_relevance(query, chunk.text),
-        )
-        for chunk in chunk_study_material(
-            material,
-            chunk_size=chunk_size,
-            overlap=overlap,
-        )
+    raw_chunks = values.get("study_chunks")
+    if raw_chunks:
+        if not isinstance(raw_chunks, list):
+            raise ValueError("study_chunks 必须是列表。")
+        try:
+            indexed_chunks = [
+                chunk
+                if isinstance(chunk, StudyChunkRecord)
+                else StudyChunkRecord.model_validate(chunk)
+                for chunk in raw_chunks
+            ]
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise ValueError("study_chunks 包含无效的 Chunk。") from exc
+        ranked_with_order = [
+            (
+                order,
+                RetrievedStudySource(
+                    source_id=chunk.chunk_id,
+                    text=chunk.text,
+                    score=_relevance(query, chunk.text),
+                    source_name=chunk.source_name,
+                    source_uri=chunk.source_uri,
+                    source_type=chunk.source_type,
+                    location=chunk.location,
+                    chunk_hash=chunk.chunk_hash,
+                ),
+            )
+            for order, chunk in enumerate(indexed_chunks)
+        ]
+    else:
+        material = normalize_study_material(str(values.get("study_material", "")))
+        if not material:
+            if raw_chunks not in (None, []):
+                raise ValueError("study_chunks 必须是列表。")
+            return []
+        ranked_with_order = [
+            (
+                order,
+                RetrievedStudySource(
+                    source_id=chunk.source_id,
+                    text=chunk.text,
+                    score=_relevance(query, chunk.text),
+                ),
+            )
+            for order, chunk in enumerate(
+                chunk_study_material(
+                    material,
+                    chunk_size=chunk_size,
+                    overlap=overlap,
+                )
+            )
+        ]
+
+    positive = [
+        (order, source)
+        for order, source in ranked_with_order
+        if source.score > 0
     ]
-    positive = [source for source in ranked if source.score > 0]
     positive.sort(
-        key=lambda source: (
-            -source.score,
-            int(source.source_id.rsplit("-", 1)[-1]),
-        )
+        key=lambda item: (-item[1].score, item[0])
     )
-    return positive[:top_k]
+    return [source for _, source in positive[:top_k]]

@@ -27,6 +27,11 @@ class StudySource(BaseModel):
     source_id: str = Field(min_length=1, description="当前会话内稳定的资料片段 ID")
     text: str = Field(min_length=1, description="命中的资料片段正文")
     score: float = Field(gt=0, le=1, description="确定性词法相关度")
+    source_name: str | None = Field(default=None, description="安全的来源文件名或网页名")
+    source_uri: str | None = Field(default=None, description="文件名或 http/https 来源 URL")
+    source_type: str | None = Field(default=None, description="资料 Loader 类型")
+    location: str | None = Field(default=None, description="页码、章节、幻灯片或代码行范围")
+    chunk_hash: str | None = Field(default=None, description="用于增量索引的 Chunk SHA-256")
 
 
 class ContextReport(BaseModel):
