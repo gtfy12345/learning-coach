@@ -5,13 +5,19 @@ from learning_coach.ingestion import StudyChunkRecord
 from learning_coach.knowledge_graph import (
     DeterministicGraphExtractor,
     ExtractedEntity,
+    ExtractedRelation,
     GraphExtractionBatch,
     ModelAugmentedGraphExtractor,
     StructuredModelGraphExtractor,
+    build_concept_graph,
+    explain_prerequisites,
+    select_seed_concepts,
+    traverse_prerequisites,
     normalize_concept_name,
     resolve_concepts,
 )
 from learning_coach.schemas import (
+    ConceptGraph,
     ConceptNode,
     ConceptRelation,
     GraphRAGReport,
@@ -301,3 +307,202 @@ def test_model_augmentation_merges_valid_structured_results() -> None:
 
     assert {"Reducer", "State"} <= {entity.name for entity in batch.entities}
     assert extractor.model_succeeded is True
+
+
+class _FixedExtractor:
+    def __init__(self, batch: GraphExtractionBatch) -> None:
+        self.batch = batch
+        self.received = 0
+
+    def extract(self, chunks: object) -> GraphExtractionBatch:
+        self.received = len(chunks)  # type: ignore[arg-type]
+        return self.batch
+
+
+def test_build_concept_graph_is_stable_deduplicated_and_evidenced() -> None:
+    chunks = [_chunk("one", index=1), _chunk("two", index=2)]
+    batch = GraphExtractionBatch(
+        entities=[
+            ExtractedEntity(
+                name="Reducer", kind="technology", chunk_id=chunks[0].chunk_id
+            ),
+            ExtractedEntity(
+                name="State", kind="technology", chunk_id=chunks[0].chunk_id
+            ),
+            ExtractedEntity(
+                name="Reducer", kind="technology", chunk_id=chunks[1].chunk_id
+            ),
+            ExtractedEntity(
+                name="State", kind="technology", chunk_id=chunks[1].chunk_id
+            ),
+        ],
+        relations=[
+            ExtractedRelation(
+                source="Reducer",
+                target="State",
+                relation_type="prerequisite_of",
+                confidence=0.8,
+                evidence_chunk_id=chunks[0].chunk_id,
+            ),
+            ExtractedRelation(
+                source="Reducer",
+                target="State",
+                relation_type="prerequisite_of",
+                confidence=0.95,
+                evidence_chunk_id=chunks[1].chunk_id,
+            ),
+            ExtractedRelation(
+                source="State",
+                target="State",
+                relation_type="related_to",
+                confidence=1,
+                evidence_chunk_id=chunks[0].chunk_id,
+            ),
+        ],
+    )
+
+    first = build_concept_graph(chunks, extractor=_FixedExtractor(batch))
+    second = build_concept_graph(chunks, extractor=_FixedExtractor(batch))
+
+    assert isinstance(first, ConceptGraph)
+    assert first == second
+    assert len(first.nodes) == 2
+    assert len(first.relations) == 1
+    relation = first.relations[0]
+    assert relation.confidence == 0.95
+    assert relation.evidence_chunk_ids == [
+        chunks[0].chunk_id,
+        chunks[1].chunk_id,
+    ]
+
+
+def test_build_concept_graph_applies_input_node_and_relation_limits() -> None:
+    chunks = [_chunk(f"chunk {index}", index=index) for index in range(1, 30)]
+    entities = [
+        ExtractedEntity(
+            name=f"Concept{index}",
+            kind="technology",
+            chunk_id=chunks[index % len(chunks)].chunk_id,
+        )
+        for index in range(100)
+    ]
+    relations = [
+        ExtractedRelation(
+            source=f"Concept{index % 79}",
+            target=f"Concept{(index + 1) % 79}",
+            relation_type="related_to",
+            confidence=0.5,
+            evidence_chunk_id=chunks[index % len(chunks)].chunk_id,
+        )
+        for index in range(220)
+    ]
+    extractor = _FixedExtractor(
+        GraphExtractionBatch(entities=entities, relations=relations)
+    )
+
+    graph = build_concept_graph(chunks, extractor=extractor)
+
+    assert extractor.received == 24
+    assert len(graph.nodes) <= 80
+    assert len(graph.relations) <= 160
+
+
+def test_seed_selection_uses_query_alias_context_and_hybrid_chunks() -> None:
+    chunks = [
+        _chunk(
+            "LangChain Expression Language（LCEL） 是 Runnable 的前置知识。",
+            index=1,
+        ),
+        _chunk("Reducer 是 State 更新的前置知识。", index=2),
+    ]
+    graph = build_concept_graph(chunks)
+    by_name = {node.name: node for node in graph.nodes}
+
+    seeds = select_seed_concepts(
+        graph,
+        query="我想掌握 LCEL",
+        context=["Runnable 组合"],
+        seed_chunk_ids=[chunks[1].chunk_id],
+    )
+
+    assert by_name["LangChain Expression Language"].concept_id in seeds
+    assert by_name["Runnable"].concept_id in seeds
+    assert by_name["Reducer"].concept_id in seeds
+
+
+def test_prerequisite_traversal_handles_chains_branches_and_cycles() -> None:
+    chunks = [
+        _chunk("基础 A 是 State 的前置知识。", index=1),
+        _chunk("基础 B 是 State 的前置知识。", index=2),
+        _chunk("State 是 Reducer 的前置知识。", index=3),
+        _chunk("Reducer 是 条件路由 的前置知识。", index=4),
+        _chunk("条件路由 是 基础 A 的前置知识。", index=5),
+    ]
+    graph = build_concept_graph(chunks)
+    target = next(
+        node for node in graph.nodes if node.name == "条件路由"
+    )
+
+    paths = traverse_prerequisites(graph, [target.concept_id])
+
+    assert paths
+    assert len(paths) <= 5
+    assert all(path.concept_ids[-1] == target.concept_id for path in paths)
+    assert all(len(path.concept_ids) <= 4 for path in paths)
+    assert all(len(set(path.concept_ids)) == len(path.concept_ids) for path in paths)
+    assert any(len(path.concept_ids) == 4 for path in paths)
+    assert paths == traverse_prerequisites(graph, [target.concept_id])
+
+
+def test_prerequisite_traversal_returns_empty_for_unknown_or_unrelated_seed() -> None:
+    graph = build_concept_graph([_chunk("LangGraph 与 LCEL 相关。")])
+    known = graph.nodes[0].concept_id
+
+    assert traverse_prerequisites(graph, ["f" * 64]) == []
+    assert traverse_prerequisites(graph, [known]) == []
+
+
+def test_prerequisite_explanations_connect_gap_path_and_source_location() -> None:
+    chunks = [
+        _chunk("State 是 Reducer 的前置知识。", index=1),
+        _chunk("Reducer 是 条件路由 的前置知识。", index=2),
+    ]
+    graph = build_concept_graph(chunks)
+    target = next(node for node in graph.nodes if node.name == "条件路由")
+
+    explanations = explain_prerequisites(
+        graph,
+        [target.concept_id],
+        gap_context={
+            "missing_point": "State 的结构不清楚",
+            "recent_errors": ["忘记 State 字段"],
+        },
+        chunks=chunks,
+    )
+
+    state = next(
+        item for item in explanations if item.prerequisite_name == "State"
+    )
+    assert state.path_names == ["State", "Reducer", "条件路由"]
+    assert "当前薄弱信息" in state.reason
+    assert "State → Reducer → 条件路由" in state.reason
+    assert state.evidence_chunk_ids == [chunks[0].chunk_id, chunks[1].chunk_id]
+    assert state.evidence_locations == [
+        "lesson.md · section 1",
+        "lesson.md · section 2",
+    ]
+
+
+def test_prerequisite_explanations_are_empty_without_evidenced_path() -> None:
+    node = ConceptNode(
+        concept_id="a" * 64,
+        name="孤立概念",
+        normalized_name="孤立概念",
+        kind="concept",
+    )
+    graph = ConceptGraph(
+        extraction_mode="deterministic", nodes=[node], relations=[]
+    )
+
+    assert explain_prerequisites(graph, [node.concept_id], gap_context={}) == []
+    build_concept_graph,

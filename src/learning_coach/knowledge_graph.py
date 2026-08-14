@@ -1,15 +1,25 @@
 from __future__ import annotations
 
-import re
 import hashlib
+import re
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections import deque
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from learning_coach.ingestion import StudyChunkRecord
-from learning_coach.schemas import ConceptKind, ConceptNode, ConceptRelationType
+from learning_coach.schemas import (
+    ConceptGraph,
+    ConceptKind,
+    ConceptNode,
+    ConceptRelation,
+    ConceptRelationType,
+    GraphExtractionMode,
+    PrerequisiteExplanation,
+)
 
 MAX_GRAPH_INPUT_CHUNKS = 24
 MAX_GRAPH_CHUNK_CHARS = 4_000
@@ -511,3 +521,331 @@ class ModelAugmentedGraphExtractor:
                 relation_keys.add(key)
                 relations.append(relation)
         return GraphExtractionBatch(entities=entities, relations=relations)
+
+
+def _relation_concept_id(
+    name: str,
+    chunk_id: str,
+    nodes: Sequence[ConceptNode],
+    mention_ids: dict[tuple[str, str], str],
+) -> str | None:
+    normalized = normalize_concept_name(name)
+    direct = mention_ids.get((normalized, chunk_id))
+    if direct is not None:
+        return direct
+    candidates = [
+        node
+        for node in nodes
+        if normalized
+        in {
+            node.normalized_name,
+            *(normalize_concept_name(alias) for alias in node.aliases),
+        }
+    ]
+    candidates.sort(
+        key=lambda node: (
+            chunk_id not in node.chunk_ids,
+            node.kind,
+            node.concept_id,
+        )
+    )
+    return candidates[0].concept_id if candidates else None
+
+
+def build_concept_graph(
+    chunks: Sequence[StudyChunkRecord],
+    *,
+    extractor: EntityRelationExtractor | None = None,
+) -> ConceptGraph:
+    """Build a stable, bounded graph without mutating source chunks."""
+
+    selected = list(chunks[:MAX_GRAPH_INPUT_CHUNKS])
+    active_extractor = extractor or DeterministicGraphExtractor()
+    extraction_mode: GraphExtractionMode = "deterministic"
+    try:
+        batch = active_extractor.extract(selected)
+        if isinstance(active_extractor, ModelAugmentedGraphExtractor):
+            extraction_mode = (
+                "model_augmented"
+                if active_extractor.model_succeeded
+                else "fallback"
+            )
+    except Exception:
+        batch = DeterministicGraphExtractor().extract(selected)
+        extraction_mode = "fallback"
+
+    nodes, mention_ids = resolve_concepts(batch.entities)
+    nodes = nodes[:MAX_GRAPH_NODES]
+    allowed_ids = {node.concept_id for node in nodes}
+    aggregated: dict[
+        tuple[str, str, ConceptRelationType], dict[str, object]
+    ] = {}
+    for extracted in batch.relations:
+        source_id = _relation_concept_id(
+            extracted.source,
+            extracted.evidence_chunk_id,
+            nodes,
+            mention_ids,
+        )
+        target_id = _relation_concept_id(
+            extracted.target,
+            extracted.evidence_chunk_id,
+            nodes,
+            mention_ids,
+        )
+        if (
+            source_id is None
+            or target_id is None
+            or source_id == target_id
+            or source_id not in allowed_ids
+            or target_id not in allowed_ids
+        ):
+            continue
+        key = (source_id, target_id, extracted.relation_type)
+        item = aggregated.setdefault(
+            key,
+            {
+                "confidence": 0.0,
+                "evidence_chunk_ids": [],
+            },
+        )
+        item["confidence"] = max(
+            float(item["confidence"]), extracted.confidence
+        )
+        evidence = item["evidence_chunk_ids"]
+        assert isinstance(evidence, list)
+        if (
+            extracted.evidence_chunk_id not in evidence
+            and len(evidence) < 8
+        ):
+            evidence.append(extracted.evidence_chunk_id)
+
+    relations: list[ConceptRelation] = []
+    for (source_id, target_id, relation_type), item in sorted(
+        aggregated.items(), key=lambda pair: pair[0]
+    )[:MAX_GRAPH_RELATIONS]:
+        relation_id = hashlib.sha256(
+            f"{source_id}\0{target_id}\0{relation_type}".encode("utf-8")
+        ).hexdigest()
+        evidence = item["evidence_chunk_ids"]
+        assert isinstance(evidence, list)
+        relations.append(
+            ConceptRelation(
+                relation_id=relation_id,
+                from_concept_id=source_id,
+                to_concept_id=target_id,
+                relation_type=relation_type,
+                confidence=float(item["confidence"]),
+                evidence_chunk_ids=evidence,
+            )
+        )
+    return ConceptGraph(
+        extraction_mode=extraction_mode,
+        nodes=nodes,
+        relations=relations,
+    )
+
+
+@dataclass(frozen=True)
+class PrerequisitePath:
+    """One cycle-free path ordered from prerequisite to target."""
+
+    concept_ids: tuple[str, ...]
+    evidence_chunk_ids: tuple[str, ...]
+    confidence: float
+
+
+def select_seed_concepts(
+    graph: ConceptGraph,
+    *,
+    query: str,
+    context: Sequence[str] = (),
+    seed_chunk_ids: Sequence[str] = (),
+    limit: int = 12,
+) -> list[str]:
+    """Select query, learning-context and Hybrid-hit concepts as graph seeds."""
+
+    if limit <= 0 or limit > 12:
+        raise ValueError("limit 必须在 1 到 12 之间。")
+    normalized_query = normalize_concept_name(query)
+    normalized_context = normalize_concept_name(" ".join(context))
+    chunk_ids = set(seed_chunk_ids)
+    ranked: list[tuple[int, str]] = []
+    for node in graph.nodes:
+        names = [node.normalized_name, *map(normalize_concept_name, node.aliases)]
+        score = 0
+        if any(name and name in normalized_query for name in names):
+            score += 4
+        if any(name and name in normalized_context for name in names):
+            score += 2
+        if chunk_ids.intersection(node.chunk_ids):
+            score += 1
+        if score:
+            ranked.append((score, node.concept_id))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [concept_id for _, concept_id in ranked[:limit]]
+
+
+def traverse_prerequisites(
+    graph: ConceptGraph,
+    target_concept_ids: Sequence[str],
+    *,
+    max_depth: int = MAX_GRAPH_DEPTH,
+    max_visited: int = MAX_GRAPH_VISITED_NODES,
+    max_paths: int = MAX_PREREQUISITE_PATHS,
+) -> list[PrerequisitePath]:
+    """Walk incoming prerequisite edges with hard depth and visit limits."""
+
+    if not 1 <= max_depth <= MAX_GRAPH_DEPTH:
+        raise ValueError(f"max_depth 必须在 1 到 {MAX_GRAPH_DEPTH} 之间。")
+    if not 1 <= max_visited <= MAX_GRAPH_VISITED_NODES:
+        raise ValueError(
+            f"max_visited 必须在 1 到 {MAX_GRAPH_VISITED_NODES} 之间。"
+        )
+    if not 1 <= max_paths <= MAX_PREREQUISITE_PATHS:
+        raise ValueError(
+            f"max_paths 必须在 1 到 {MAX_PREREQUISITE_PATHS} 之间。"
+        )
+
+    known_ids = {node.concept_id for node in graph.nodes}
+    incoming: dict[str, list[ConceptRelation]] = {}
+    for relation in graph.relations:
+        if relation.relation_type == "prerequisite_of":
+            incoming.setdefault(relation.to_concept_id, []).append(relation)
+    for relations in incoming.values():
+        relations.sort(
+            key=lambda relation: (
+                relation.from_concept_id,
+                -relation.confidence,
+                relation.relation_id,
+            )
+        )
+
+    targets = sorted(
+        dict.fromkeys(
+            concept_id
+            for concept_id in target_concept_ids
+            if concept_id in known_ids
+        )
+    )
+    queue: deque[tuple[str, tuple[str, ...], tuple[str, ...], float, int]] = deque(
+        (target, (target,), (), 1.0, 0) for target in targets
+    )
+    visited = set(targets)
+    paths: list[PrerequisitePath] = []
+    while queue and len(paths) < max_paths:
+        current, current_path, evidence, confidence, depth = queue.popleft()
+        if depth >= max_depth:
+            continue
+        for relation in incoming.get(current, []):
+            prerequisite = relation.from_concept_id
+            if prerequisite in current_path:
+                continue
+            next_path = (prerequisite, *current_path)
+            next_evidence = tuple(
+                dict.fromkeys((*relation.evidence_chunk_ids, *evidence))
+            )[:8]
+            next_confidence = min(confidence, relation.confidence)
+            paths.append(
+                PrerequisitePath(
+                    concept_ids=next_path,
+                    evidence_chunk_ids=next_evidence,
+                    confidence=round(next_confidence, 6),
+                )
+            )
+            if len(paths) >= max_paths:
+                break
+            if prerequisite not in visited and len(visited) < max_visited:
+                visited.add(prerequisite)
+                queue.append(
+                    (
+                        prerequisite,
+                        next_path,
+                        next_evidence,
+                        next_confidence,
+                        depth + 1,
+                    )
+                )
+    return paths
+
+
+def _flatten_context(values: Mapping[str, Any]) -> list[str]:
+    clauses: list[str] = []
+    for key in ("missing_point", "recent_errors", "diagnostic_focus", "feedback"):
+        value = values.get(key)
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            clauses.extend(str(item) for item in value if str(item).strip())
+        elif value is not None and str(value).strip():
+            clauses.append(str(value))
+    return clauses
+
+
+def explain_prerequisites(
+    graph: ConceptGraph,
+    target_concept_ids: Sequence[str],
+    *,
+    gap_context: Mapping[str, Any],
+    chunks: Sequence[StudyChunkRecord] = (),
+) -> list[PrerequisiteExplanation]:
+    """Explain evidenced prerequisite paths without inferring mastery."""
+
+    nodes = {node.concept_id: node for node in graph.nodes}
+    chunk_locations = {
+        chunk.chunk_id: f"{chunk.source_name} · {chunk.location}"
+        for chunk in chunks
+    }
+    normalized_gap = normalize_concept_name(" ".join(_flatten_context(gap_context)))
+    ranked: list[tuple[bool, int, PrerequisiteExplanation]] = []
+    for path in traverse_prerequisites(graph, target_concept_ids):
+        if not path.evidence_chunk_ids:
+            continue
+        prerequisite = nodes.get(path.concept_ids[0])
+        target = nodes.get(path.concept_ids[-1])
+        if prerequisite is None or target is None:
+            continue
+        path_nodes = [nodes.get(concept_id) for concept_id in path.concept_ids]
+        if any(node is None for node in path_nodes):
+            continue
+        path_names = [node.name for node in path_nodes if node is not None]
+        names = [
+            prerequisite.normalized_name,
+            *map(normalize_concept_name, prerequisite.aliases),
+        ]
+        matched = any(name and name in normalized_gap for name in names)
+        path_text = " → ".join(path_names)
+        if matched:
+            reason = (
+                f"当前薄弱信息提到“{prerequisite.name}”；资料中的前置路径"
+                f"“{path_text}”说明应先补这一概念。"
+            )
+        else:
+            reason = (
+                f"要理解“{target.name}”，资料显示需先掌握"
+                f"“{prerequisite.name}”；前置路径为“{path_text}”。"
+            )
+        explanation = PrerequisiteExplanation(
+            target_concept_id=target.concept_id,
+            target_name=target.name,
+            prerequisite_concept_id=prerequisite.concept_id,
+            prerequisite_name=prerequisite.name,
+            path_concept_ids=list(path.concept_ids),
+            path_names=path_names,
+            reason=reason,
+            evidence_chunk_ids=list(path.evidence_chunk_ids),
+            evidence_locations=[
+                chunk_locations[chunk_id]
+                for chunk_id in path.evidence_chunk_ids
+                if chunk_id in chunk_locations
+            ],
+        )
+        ranked.append((matched, len(path.concept_ids), explanation))
+    ranked.sort(
+        key=lambda item: (
+            not item[0],
+            -item[1],
+            item[2].prerequisite_concept_id,
+        )
+    )
+    return [item[2] for item in ranked[:MAX_PREREQUISITE_PATHS]]

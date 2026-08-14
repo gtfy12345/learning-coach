@@ -139,6 +139,7 @@ class PrerequisiteExplanation(BaseModel):
     path_names: list[str] = Field(min_length=2, max_length=4)
     reason: str = Field(min_length=1, max_length=512)
     evidence_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
+    evidence_locations: list[str] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_path_shape(self) -> "PrerequisiteExplanation":
@@ -149,6 +150,16 @@ class PrerequisiteExplanation(BaseModel):
         if self.path_concept_ids[-1] != self.target_concept_id:
             raise ValueError("前置路径必须以 target 结束。")
         return self
+
+
+class ConceptGraph(BaseModel):
+    """Bounded runtime graph derived from the current session's chunks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    extraction_mode: GraphExtractionMode
+    nodes: list[ConceptNode] = Field(default_factory=list, max_length=80)
+    relations: list[ConceptRelation] = Field(default_factory=list, max_length=160)
 
 
 class GraphRAGReport(BaseModel):
