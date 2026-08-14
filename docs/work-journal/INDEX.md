@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-15](2026-08-15.md) | `feat(code-practice): 受限执行与有界 react` | #feat |
 | [2026-08-15](2026-08-15.md) | `feat(code-practice): 工具 schema 与动态注册表` | #feat |
 | [2026-08-15](2026-08-15.md) | `docs(code-practice): 定义有界代码实践交付计划` | #docs |
 | [2026-08-15](2026-08-15.md) | `feat(graphrag): 完成知识前置图交付` | #feat #docs |

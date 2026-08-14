@@ -4,8 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from learning_coach.code_practice import (
+    BoundedCodePracticeAgent,
     CodePracticeToolRegistry,
     DeterministicExerciseGenerator,
+    RestrictedPythonExecutor,
     is_code_practice_topic,
 )
 from learning_coach.schemas import (
@@ -135,3 +137,118 @@ def test_tool_input_schema_is_applied_before_runner_invocation() -> None:
                 "unknown": True,
             }
         )
+
+
+@pytest.fixture
+def python_exercise() -> CodeExercise:
+    exercise = DeterministicExerciseGenerator().generate("Python 函数")
+    assert exercise is not None
+    return exercise
+
+
+@pytest.mark.parametrize(
+    ("code", "fragment"),
+    [
+        ("import os\ndef clamp_score(score): return score", "Import"),
+        ("def clamp_score(score): return open('x')", "open"),
+        ("def clamp_score(score): return score.__class__", "dunder"),
+    ],
+)
+def test_restricted_executor_rejects_dangerous_ast_before_running(
+    python_exercise: CodeExercise,
+    code: str,
+    fragment: str,
+) -> None:
+    report = RestrictedPythonExecutor().run(python_exercise, code)
+
+    assert report.status == "rejected"
+    assert report.error_type == "policy_violation"
+    assert fragment.casefold() in report.outcomes[0].summary.casefold()
+    assert "/Users/" not in report.model_dump_json()
+
+
+def test_restricted_executor_runs_server_owned_tests(
+    python_exercise: CodeExercise,
+) -> None:
+    report = RestrictedPythonExecutor().run(
+        python_exercise,
+        "def clamp_score(score):\n    return min(100, max(0, score))\n",
+    )
+
+    assert report.status == "passed"
+    assert report.error_type == "none"
+    assert report.passed_tests == report.total_tests == 4
+    assert report.score == 100
+    assert all(outcome.status == "passed" for outcome in report.outcomes)
+
+
+def test_restricted_executor_terminates_infinite_loop(
+    python_exercise: CodeExercise,
+) -> None:
+    report = RestrictedPythonExecutor(timeout_seconds=0.25).run(
+        python_exercise,
+        "def clamp_score(score):\n    while True:\n        pass\n",
+    )
+
+    assert report.status == "error"
+    assert report.error_type == "timeout"
+    assert report.score == 0
+    assert report.total_tests == 4
+
+
+def test_bounded_react_agent_generates_and_evaluates_with_trace(
+    python_exercise: CodeExercise,
+) -> None:
+    executor = RestrictedPythonExecutor()
+    registry = CodePracticeToolRegistry(
+        generator=DeterministicExerciseGenerator(),
+        runner=executor.run,
+    )
+    agent = BoundedCodePracticeAgent(registry)
+
+    generated = agent.generate(
+        topic="Python 函数",
+        explanation="限制输入范围",
+        tool_call_limit=2,
+    )
+    evaluated = agent.evaluate(
+        exercise=python_exercise,
+        code="def clamp_score(score): return min(100, max(0, score))",
+        tool_call_limit=2,
+    )
+
+    assert generated.exercise is not None
+    assert generated.tool_calls == 1
+    assert generated.trace[0].tool_name == "generate_code_exercise"
+    assert generated.termination_reason == "completed"
+    assert evaluated.report is not None
+    assert evaluated.report.status == "passed"
+    assert evaluated.trace[0].observation == "4/4 tests passed"
+
+
+def test_bounded_react_agent_stops_on_duplicate_action_and_budget() -> None:
+    registry = CodePracticeToolRegistry(
+        generator=DeterministicExerciseGenerator(),
+        runner=RestrictedPythonExecutor().run,
+    )
+    agent = BoundedCodePracticeAgent(registry)
+    action = {
+        "tool_name": "generate_code_exercise",
+        "arguments": {"topic": "历史概念", "explanation": "纯理论"},
+    }
+
+    duplicate = agent.run(
+        stage="generate",
+        actions=[action, action],
+        exercise=None,
+        tool_call_limit=3,
+    )
+    exhausted = agent.generate(
+        topic="Python 函数", explanation="", tool_call_limit=0
+    )
+
+    assert duplicate.tool_calls == 1
+    assert duplicate.termination_reason == "duplicate_action"
+    assert duplicate.trace[-1].status == "rejected"
+    assert exhausted.tool_calls == 0
+    assert exhausted.termination_reason == "budget_exhausted"
