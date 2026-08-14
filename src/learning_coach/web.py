@@ -16,6 +16,15 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator
 
 from learning_coach.graph import build_learning_graph
+from learning_coach.ingestion import (
+    MAX_SINGLE_MATERIAL_BYTES,
+    IngestionReport,
+    MaterialIngestionPipeline,
+    MaterialInput,
+    material_inputs_from_urls,
+    validate_material_batch,
+)
+from learning_coach.loaders import SafeWebFetcher, default_loader_registry
 from learning_coach.context import (
     LearningContextSettings,
     LearningRuntimeContext,
@@ -89,6 +98,7 @@ class SessionView(BaseModel):
     recent_errors: list[str] = Field(default_factory=list)
     context_summary: str | None = None
     context_report: ContextReport | None = None
+    ingestion_report: IngestionReport | None = None
     question: str | None = None
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
@@ -129,6 +139,7 @@ class LearningSessionService:
         assessment_fallback_model_id: str | None = None,
         run_timeout_seconds: float | None = None,
         context_settings: LearningContextSettings | None = None,
+        web_fetcher: SafeWebFetcher | None = None,
     ) -> None:
         self._models = models
         self._models_factory = models_factory
@@ -150,6 +161,7 @@ class LearningSessionService:
         self._context_settings = context_settings or LearningContextSettings.from_environ(
             os.environ
         )
+        self._web_fetcher = web_fetcher
         self._setup_lock = threading.Lock()
         self._invoke_lock = threading.Lock()
 
@@ -204,6 +216,7 @@ class LearningSessionService:
         image_blocks: Sequence[dict[str, Any]],
         study_material: str,
         learning_goal: str = "",
+        materials: Sequence[MaterialInput] = (),
     ) -> dict[str, Any]:
         normalized_topic = topic.strip()
         if not normalized_topic:
@@ -231,6 +244,27 @@ class LearningSessionService:
         normalized_material = normalize_study_material(study_material)
         if normalized_material:
             initial_state["study_material"] = normalized_material
+        if materials:
+            ingestion_materials = list(materials)
+            if normalized_material:
+                ingestion_materials.append(
+                    MaterialInput(
+                        source_name="pasted-text.txt",
+                        mime_type="text/plain",
+                        data=normalized_material.encode("utf-8"),
+                    )
+                )
+            ingestion = MaterialIngestionPipeline(
+                default_loader_registry(
+                    web_fetcher=self._web_fetcher,
+                    image_model=self._models.chat,
+                    accepts_images=self._models.accepts_images,
+                )
+            ).ingest(ingestion_materials)
+            initial_state["study_chunks"] = [
+                chunk.model_dump() for chunk in ingestion.chunks
+            ]
+            initial_state["ingestion_report"] = ingestion.report.model_dump()
         if image_blocks:
             initial_state["diagnostic_images"] = list(image_blocks)
         return initial_state
@@ -241,11 +275,12 @@ class LearningSessionService:
         image_blocks: Sequence[dict[str, Any]] = (),
         study_material: str = "",
         learning_goal: str = "",
+        materials: Sequence[MaterialInput] = (),
     ) -> SessionView:
         graph = self._ensure_graph()
         session_id = uuid.uuid4().hex
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal
+            topic, image_blocks, study_material, learning_goal, materials
         )
         runtime_context = create_learning_runtime_context(
             initial_state["topic"],
@@ -254,7 +289,10 @@ class LearningSessionService:
         )
         config = session_run_config(
             session_id,
-            has_study_material=bool(initial_state.get("study_material")),
+            has_study_material=bool(
+                initial_state.get("study_material")
+                or initial_state.get("study_chunks")
+            ),
         )
 
         with self._invoke_lock:
@@ -271,9 +309,10 @@ class LearningSessionService:
         image_blocks: Sequence[dict[str, Any]] = (),
         study_material: str = "",
         learning_goal: str = "",
+        materials: Sequence[MaterialInput] = (),
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal
+            topic, image_blocks, study_material, learning_goal, materials
         )
         session_id = uuid.uuid4().hex
         self._runtime_contexts[session_id] = create_learning_runtime_context(
@@ -332,6 +371,7 @@ class LearningSessionService:
             session_id,
             has_study_material=(
                 bool(graph_input.get("study_material"))
+                or bool(graph_input.get("study_chunks"))
                 if isinstance(graph_input, dict)
                 else None
             ),
@@ -411,6 +451,7 @@ class LearningSessionService:
                 recent_errors=state.get("recent_errors", []),
                 context_summary=state.get("context_summary"),
                 context_report=state.get("context_report"),
+                ingestion_report=state.get("ingestion_report"),
                 question=str(payload.get("question", "")),
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
@@ -433,6 +474,7 @@ class LearningSessionService:
             recent_errors=state.get("recent_errors", []),
             context_summary=state.get("context_summary"),
             context_report=state.get("context_report"),
+            ingestion_report=state.get("ingestion_report"),
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),
@@ -458,6 +500,30 @@ def _raise_http_error(exc: Exception) -> None:
 def _sse(event: str, data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+async def _read_material_inputs(
+    uploads: Sequence[UploadFile],
+    source_urls: str,
+) -> list[MaterialInput]:
+    materials: list[MaterialInput] = []
+    try:
+        for upload in uploads:
+            content = await upload.read(MAX_SINGLE_MATERIAL_BYTES + 1)
+            materials.append(
+                MaterialInput(
+                    source_name=upload.filename or "material",
+                    mime_type=upload.content_type or "application/octet-stream",
+                    data=content,
+                )
+            )
+        urls = [line.strip() for line in source_urls.splitlines() if line.strip()]
+        materials.extend(material_inputs_from_urls(urls))
+        validate_material_batch(materials)
+        return materials
+    finally:
+        for upload in uploads:
+            await upload.close()
 
 
 def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
@@ -495,7 +561,9 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
         topic: str = Form(...),
         learning_goal: str = Form(default=""),
         image: UploadFile | None = File(default=None),
+        materials: list[UploadFile] | None = File(default=None),
         study_material: str = Form(default=""),
+        source_urls: str = Form(default=""),
     ) -> SessionView:
         image_blocks: list[dict[str, Any]] = []
         try:
@@ -507,12 +575,16 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                         image.content_type or "application/octet-stream",
                     )
                 )
+            material_inputs = await _read_material_inputs(
+                materials or [], source_urls
+            )
             return await run_in_threadpool(
                 session_service.create_session,
                 topic,
                 image_blocks,
                 study_material,
                 learning_goal,
+                material_inputs,
             )
         except Exception as exc:
             _raise_http_error(exc)
@@ -526,7 +598,9 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
         topic: str = Form(...),
         learning_goal: str = Form(default=""),
         image: UploadFile | None = File(default=None),
+        materials: list[UploadFile] | None = File(default=None),
         study_material: str = Form(default=""),
+        source_urls: str = Form(default=""),
     ) -> StreamingResponse:
         image_blocks: list[dict[str, Any]] = []
         try:
@@ -538,8 +612,15 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                         image.content_type or "application/octet-stream",
                     )
                 )
+            material_inputs = await _read_material_inputs(
+                materials or [], source_urls
+            )
             events = session_service.create_session_events(
-                topic, image_blocks, study_material, learning_goal
+                topic,
+                image_blocks,
+                study_material,
+                learning_goal,
+                material_inputs,
             )
         except Exception as exc:
             _raise_http_error(exc)

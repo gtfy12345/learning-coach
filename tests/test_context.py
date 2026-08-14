@@ -182,6 +182,18 @@ def test_teaching_context_disables_tools_without_relevant_state_or_budget() -> N
     assert context.prefer_advanced_model is False
 
 
+def test_teaching_context_exposes_search_for_indexed_material_chunks() -> None:
+    context = build_teaching_context(
+        {
+            "topic": "LangGraph",
+            "study_chunks": [{"text": "Reducer 合并状态"}],
+        },
+        LearningRuntimeContext(learning_goal="掌握 LangGraph"),
+    )
+
+    assert "search_study_material" in context.available_tools
+
+
 def test_public_docs_describe_context_engineering_configuration() -> None:
     root = Path(__file__).parents[1]
     readme = (root / "README.md").read_text(encoding="utf-8")

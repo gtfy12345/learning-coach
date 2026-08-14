@@ -13,6 +13,11 @@ from learning_coach.context import (
     create_learning_runtime_context,
 )
 from learning_coach.graph import build_learning_graph
+from learning_coach.ingestion import (
+    MaterialIngestionPipeline,
+    material_inputs_from_sources,
+)
+from learning_coach.loaders import default_loader_registry
 from learning_coach.media import image_content_block
 from learning_coach.model import create_model_suite
 
@@ -44,6 +49,7 @@ def run(
     *,
     thread_id: str | None = None,
     image_sources: Sequence[str] = (),
+    material_sources: Sequence[str] = (),
     learning_goal: str | None = None,
 ) -> dict[str, Any]:
     """Run one learning session until the graph finishes."""
@@ -55,6 +61,16 @@ def run(
             "当前主模型的 profile 没有声明图片输入能力。"
             "请更换视觉模型，或为兼容端点设置 IMAGE_INPUT_POLICY=allow。"
         )
+
+    ingestion = None
+    if material_sources:
+        materials = material_inputs_from_sources(material_sources)
+        ingestion = MaterialIngestionPipeline(
+            default_loader_registry(
+                image_model=getattr(models, "chat", None),
+                accepts_images=models.accepts_images,
+            )
+        ).ingest(materials)
 
     graph = build_learning_graph(models)
     runtime_context = create_learning_runtime_context(
@@ -74,6 +90,11 @@ def run(
     }
     if images:
         initial_state["diagnostic_images"] = images
+    if ingestion is not None:
+        initial_state["study_chunks"] = [
+            chunk.model_dump() for chunk in ingestion.chunks
+        ]
+        initial_state["ingestion_report"] = ingestion.report.model_dump()
     result = graph.invoke(
         initial_state, config=config, context=runtime_context
     )
@@ -153,6 +174,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="随诊断题发送的图片；可重复传入",
     )
     parser.add_argument(
+        "--material",
+        action="append",
+        default=[],
+        metavar="PATH_OR_URL",
+        help="学习资料文件或网页 URL；可重复传入",
+    )
+    parser.add_argument(
         "--goal",
         help="本次学习目标；未填写时默认为掌握当前主题",
     )
@@ -162,6 +190,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         run(
             _read_topic(args.topic),
             image_sources=args.image,
+            material_sources=args.material,
             learning_goal=args.goal,
         )
     except (RuntimeError, ValueError) as exc:

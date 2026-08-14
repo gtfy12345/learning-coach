@@ -98,6 +98,33 @@
                 placeholder="例如课程笔记、技术说明或代码概念。讲解阶段会检索相关片段并显示来源。"
               ></textarea>
             </label>
+            <label class="upload-box" for="materials">
+              <span class="upload-icon" aria-hidden="true">＋</span>
+              <span>
+                <strong id="materials-title">上传论文、书籍、课件、图片或代码</strong>
+                <small>PDF、DOCX、PPTX、EPUB、HTML、文本、图片与代码 · 最多 10 个</small>
+              </span>
+              <input
+                id="materials"
+                name="materials"
+                type="file"
+                multiple
+                accept=".pdf,.docx,.pptx,.epub,.html,.htm,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cc,.cpp,.h,.hpp,.cs,.rb,.php,.sh,.sql,.yaml,.yml,.json,.toml,.xml,.css"
+              />
+            </label>
+            <label class="material-box" for="source-urls">
+              <span>
+                <strong>添加课程网页</strong>
+                <small>可选 · 每行一个 http/https URL · 不递归抓取链接</small>
+              </span>
+              <textarea
+                id="source-urls"
+                name="source_urls"
+                rows="3"
+                maxlength="10000"
+                placeholder="https://docs.example.com/course/lesson-1"
+              ></textarea>
+            </label>
             <p class="form-error" id="setup-error" role="alert"></p>
           </form>
 
@@ -184,6 +211,7 @@
           <span id="context-goal">等待学习目标</span>
           <span id="context-mastery">掌握度 0 / 100</span>
           <span id="context-budget">预算将在讲解后显示</span>
+          <span id="context-ingestion">尚未摄取学习资料</span>
         </div>
       </aside>
     </main>

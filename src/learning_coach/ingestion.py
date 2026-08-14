@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
-from urllib.parse import urlparse
+from typing import Any, Literal, Protocol
+from urllib.parse import unquote, urlparse
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -369,6 +370,93 @@ def _source_summary(
         chunks=chunks,
         status=status,
     )
+
+
+class _LoaderRegistry(Protocol):
+    def load(self, material: MaterialInput) -> list[Document]: ...
+
+
+class MaterialIngestionResult(BaseModel):
+    chunks: list[StudyChunkRecord] = Field(default_factory=list)
+    report: IngestionReport = Field(default_factory=IngestionReport)
+
+
+class MaterialIngestionPipeline:
+    """Load, split and index one bounded batch without persisting content."""
+
+    def __init__(
+        self,
+        registry: _LoaderRegistry,
+        *,
+        index: InMemoryStudyIndex | None = None,
+    ) -> None:
+        self._registry = registry
+        self._index = index or InMemoryStudyIndex()
+
+    def ingest(
+        self,
+        materials: Sequence[MaterialInput],
+        *,
+        cleanup: Literal["incremental", "full"] = "full",
+    ) -> MaterialIngestionResult:
+        validate_material_batch(materials)
+        documents = [
+            document
+            for material in materials
+            for document in self._registry.load(material)
+        ]
+        report = self._index.sync(documents, cleanup=cleanup)
+        return MaterialIngestionResult(chunks=self._index.chunks, report=report)
+
+
+def material_inputs_from_sources(sources: Sequence[str]) -> list[MaterialInput]:
+    """Convert repeatable CLI paths or URLs into bounded material inputs."""
+
+    materials: list[MaterialInput] = []
+    for source in sources:
+        value = source.strip()
+        if not value:
+            raise ValueError("学习资料路径或 URL 不能为空。")
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"}:
+            source_name = Path(unquote(parsed.path)).name or parsed.hostname or "webpage"
+            mime_type, _ = mimetypes.guess_type(source_name)
+            materials.append(
+                MaterialInput(
+                    source_name=source_name,
+                    mime_type=mime_type or "text/html",
+                    source_url=value,
+                )
+            )
+            continue
+        if parsed.scheme:
+            raise ValueError("学习资料只支持本地文件、http URL 或 https URL。")
+        path = Path(value).expanduser()
+        if not path.is_file():
+            raise ValueError(f"找不到学习资料：{path.name or value}")
+        if path.stat().st_size > MAX_SINGLE_MATERIAL_BYTES:
+            raise ValueError(
+                f"单个资料不能超过 {MAX_SINGLE_MATERIAL_BYTES} 字节。"
+            )
+        mime_type, _ = mimetypes.guess_type(path.name)
+        materials.append(
+            MaterialInput(
+                source_name=path.name,
+                mime_type=mime_type or "text/plain",
+                data=path.read_bytes(),
+            )
+        )
+    validate_material_batch(materials)
+    return materials
+
+
+def material_inputs_from_urls(urls: Sequence[str]) -> list[MaterialInput]:
+    """Convert untrusted Web form URL lines without permitting server file reads."""
+
+    for value in urls:
+        if urlparse(value.strip()).scheme not in {"http", "https"}:
+            raise ValueError("网页资料只支持 http 或 https URL。")
+    return material_inputs_from_sources(urls)
 
 
 def validate_material_batch(materials: Sequence[MaterialInput]) -> None:

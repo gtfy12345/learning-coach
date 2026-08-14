@@ -191,7 +191,10 @@ def build_teaching_context(
 
     mastery = _mastery_level(values.get("mastery_level", 0))
     errors = update_recent_errors(list(values.get("recent_errors", [])), None)
-    has_material = bool(str(values.get("study_material", "")).strip())
+    has_material = bool(
+        str(values.get("study_material", "")).strip()
+        or values.get("study_chunks")
+    )
     has_progress = any(
         str(values.get(key, "")).strip()
         for key in ("diagnostic_answer", "feedback", "missing_point")

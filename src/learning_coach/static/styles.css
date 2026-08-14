@@ -244,6 +244,7 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .material-box strong { color: var(--ink); font-size: 13px; }
 .material-box small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .material-box textarea { min-height: 104px; }
+#source-urls { min-height: 76px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 
 .form-error { min-height: 18px; margin: 10px 2px 0; color: #ae4545; font-size: 12px; }
 

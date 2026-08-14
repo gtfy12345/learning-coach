@@ -6,6 +6,9 @@ const topicInput = document.querySelector("#topic");
 const learningGoalInput = document.querySelector("#learning-goal");
 const imageInput = document.querySelector("#image");
 const studyMaterialInput = document.querySelector("#study-material");
+const materialsInput = document.querySelector("#materials");
+const materialsTitle = document.querySelector("#materials-title");
+const sourceUrlsInput = document.querySelector("#source-urls");
 const uploadTitle = document.querySelector("#upload-title");
 const setupError = document.querySelector("#setup-error");
 const answerInput = document.querySelector("#answer");
@@ -22,6 +25,7 @@ const cancelRunButton = document.querySelector("#cancel-run");
 const contextGoal = document.querySelector("#context-goal");
 const contextMastery = document.querySelector("#context-mastery");
 const contextBudget = document.querySelector("#context-budget");
+const contextIngestion = document.querySelector("#context-ingestion");
 
 let sessionId = null;
 let activeController = null;
@@ -102,7 +106,10 @@ function streamMessage(task, streamedMessages) {
 
 function sourceText(sources) {
   return sources
-    .map((source) => `[${source.source_id}] ${source.text}`)
+    .map((source) => {
+      const label = [source.source_name, source.location].filter(Boolean).join(" · ");
+      return `[${label || source.source_id}] ${source.text}`;
+    })
     .join("\n\n");
 }
 
@@ -131,6 +138,10 @@ function updateContextInsight(data) {
   contextBudget.textContent = report
     ? `${report.mode.toUpperCase()} · 模型 ${report.model_calls}/${report.model_call_limit} · 工具 ${report.tool_calls}/${report.tool_call_limit}`
     : "预算将在讲解后显示";
+  const ingestion = data.ingestion_report;
+  contextIngestion.textContent = ingestion
+    ? `资料 ${ingestion.sources_received} 个 · 新增 ${ingestion.sources_added} · 更新 ${ingestion.sources_updated} · 跳过 ${ingestion.sources_skipped}`
+    : "尚未摄取学习资料";
   if (data.context_summary) contextGoal.title = data.context_summary;
 }
 
@@ -192,6 +203,12 @@ startForm.addEventListener("submit", async (event) => {
   if (imageInput.files[0]) formData.append("image", imageInput.files[0]);
   if (studyMaterialInput.value.trim()) {
     formData.append("study_material", studyMaterialInput.value);
+  }
+  for (const material of materialsInput.files) {
+    formData.append("materials", material);
+  }
+  if (sourceUrlsInput.value.trim()) {
+    formData.append("source_urls", sourceUrlsInput.value);
   }
   activeController = new AbortController();
   cancelStartButton.hidden = false;
@@ -298,6 +315,18 @@ imageInput.addEventListener("change", () => {
   uploadTitle.textContent = file ? file.name : "附一张题目或流程图";
 });
 
+materialsInput.addEventListener("change", () => {
+  const files = Array.from(materialsInput.files);
+  if (!files.length) {
+    materialsTitle.textContent = "上传论文、书籍、课件、图片或代码";
+    return;
+  }
+  const preview = files.slice(0, 2).map((file) => file.name).join("、");
+  materialsTitle.textContent = files.length > 2
+    ? `已选择 ${files.length} 个资料：${preview}…`
+    : `已选择：${preview}`;
+});
+
 document.querySelector("#restart-button").addEventListener("click", () => {
   sessionId = null;
   timeline.replaceChildren();
@@ -315,6 +344,7 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   contextGoal.textContent = "等待学习目标";
   contextMastery.textContent = "掌握度 0 / 100";
   contextBudget.textContent = "预算将在讲解后显示";
+  contextIngestion.textContent = "尚未摄取学习资料";
   topicInput.focus();
 });
 

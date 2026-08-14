@@ -4,10 +4,12 @@ import time
 from typing import Any
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from learning_coach.model import LearningCoachModels
+from learning_coach.loaders import SafeWebFetcher
 from learning_coach.schemas import Assessment, Diagnostic
 from learning_coach.web import (
     LearningSessionService,
@@ -81,7 +83,10 @@ class FakeChatModel:
 
 
 def make_client(
-    *, scores: tuple[int, ...] = (86,), run_timeout_seconds: float = 120
+    *,
+    scores: tuple[int, ...] = (86,),
+    run_timeout_seconds: float = 120,
+    web_fetcher: SafeWebFetcher | None = None,
 ) -> tuple[TestClient, FakeChatModel]:
     model = FakeChatModel(scores)
     models = LearningCoachModels.from_models(model)
@@ -90,6 +95,7 @@ def make_client(
         chat_model_id="fake:coach",
         assessment_model_id="fake:assessment",
         run_timeout_seconds=run_timeout_seconds,
+        web_fetcher=web_fetcher,
     )
     return TestClient(create_app(service=service)), model
 
@@ -193,6 +199,114 @@ def test_web_session_grounds_teaching_in_optional_study_material() -> None:
     assert payload["sources"]
     assert payload["sources"][0]["source_id"].startswith("material-1#chunk-")
     assert "retry 或 finish" in model.text_messages[0][1].content
+
+
+def test_web_ingests_multiple_files_and_webpage_with_safe_report() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=(
+                "<html><body><h1>补救循环</h1>"
+                "<p>retry 分支必须受 attempts 上限约束。</p></body></html>"
+            ).encode(),
+            request=request,
+        )
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handle), follow_redirects=False
+    )
+    fetcher = SafeWebFetcher(
+        client=http_client,
+        resolver=lambda host: ["93.184.216.34"],
+    )
+    client, model = make_client(web_fetcher=fetcher)
+
+    started = client.post(
+        "/api/sessions",
+        data={
+            "topic": "LangGraph retry attempts",
+            "source_urls": "https://example.com/course/remedial",
+        },
+        files=[
+            (
+                "materials",
+                (
+                    "graph.py",
+                    b"def route(score):\n    return 'retry' if score < 80 else 'finish'\n",
+                    "text/x-python",
+                ),
+            ),
+            (
+                "materials",
+                (
+                    "notes.md",
+                    "# 条件边\nattempts 限制补救次数。".encode(),
+                    "text/markdown",
+                ),
+            ),
+        ],
+    )
+
+    assert started.status_code == 201
+    state = started.json()
+    report = state["ingestion_report"]
+    assert report["sources_received"] == 3
+    assert report["sources_added"] == 3
+    assert report["errors"] == []
+    assert "retry" not in json.dumps(report, ensure_ascii=False)
+
+    taught = client.post(
+        f"/api/sessions/{state['session_id']}/answers",
+        json={"answer": "根据 score 和 attempts 选择。"},
+    ).json()
+    assert taught["sources"]
+    assert taught["sources"][0]["source_name"] in {
+        "graph.py",
+        "notes.md",
+        "remedial",
+    }
+    assert taught["sources"][0]["location"]
+    assert "attempts" in model.text_messages[0][1].content
+    http_client.close()
+
+
+def test_stream_session_returns_ingestion_report_for_uploaded_material() -> None:
+    client, _ = make_client()
+
+    response = client.post(
+        "/api/sessions/stream",
+        data={"topic": "Reducer"},
+        files={
+            "materials": (
+                "lesson.txt",
+                "Reducer 合并并行状态。".encode(),
+                "text/plain",
+            )
+        },
+    )
+
+    events = _sse_events(response)
+    state = next(payload for event, payload in events if event == "state")
+    assert state["ingestion_report"]["sources_added"] == 1
+    assert state["ingestion_report"]["sources"][0]["source_name"] == "lesson.txt"
+
+
+def test_web_rejects_too_many_materials_before_starting_session() -> None:
+    client, _ = make_client()
+    files = [
+        ("materials", (f"lesson-{index}.txt", b"text", "text/plain"))
+        for index in range(11)
+    ]
+
+    response = client.post(
+        "/api/sessions",
+        data={"topic": "Limits"},
+        files=files,
+    )
+
+    assert response.status_code == 422
+    assert "资料数量" in response.json()["detail"]
 
 
 def test_web_session_exposes_bounded_remedial_round() -> None:
@@ -442,6 +556,11 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     response = client.get("/")
 
     assert 'id="study-material"' in response.text
+    assert 'id="materials"' in response.text
+    assert 'name="materials"' in response.text
+    assert "multiple" in response.text
+    assert 'id="source-urls"' in response.text
+    assert 'id="context-ingestion"' in response.text
     assert 'id="learning-goal"' in response.text
     assert 'id="context-insight"' in response.text
     assert 'id="cancel-run"' in response.text
@@ -451,6 +570,11 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert "answers/stream" in app_script
     assert 'stage === "teaching"' in app_script
     assert 'formData.append("learning_goal"' in app_script
+    assert 'formData.append("materials"' in app_script
+    assert 'formData.append("source_urls"' in app_script
+    assert "source.source_name" in app_script
+    assert "source.location" in app_script
+    assert "ingestion_report" in app_script
     assert "context_summary" in app_script
     assert "context_report" in app_script
 

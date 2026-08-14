@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from learning_coach import cli
+from learning_coach.ingestion import material_inputs_from_sources
 
 
 class FinishedGraph:
@@ -109,3 +110,68 @@ def test_main_accepts_optional_learning_goal(monkeypatch) -> None:
     cli.main(["LCEL", "--goal", "能独立组合 Runnable"])
 
     assert calls == [("LCEL", "能独立组合 Runnable")]
+
+
+def test_material_sources_support_local_files_and_urls_without_leaking_path(
+    tmp_path,
+) -> None:
+    local_path = tmp_path / "lesson.py"
+    local_path.write_text("def route():\n    return 'finish'\n", encoding="utf-8")
+
+    materials = material_inputs_from_sources(
+        [str(local_path), "https://example.com/course/intro"]
+    )
+
+    assert materials[0].source_name == "lesson.py"
+    assert materials[0].source_uri == "lesson.py"
+    assert materials[0].mime_type in {"text/x-python", "text/plain"}
+    assert materials[1].source_url == "https://example.com/course/intro"
+    assert materials[1].source_name == "intro"
+
+
+def test_run_ingests_material_files_into_initial_state(monkeypatch, tmp_path) -> None:
+    graph = FinishedGraph()
+    material_path = tmp_path / "lesson.txt"
+    material_path.write_text("Reducer 合并并行状态。", encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "create_model_suite",
+        lambda: SimpleNamespace(
+            accepts_images=False,
+            chat=object(),
+        ),
+    )
+    monkeypatch.setattr(cli, "build_learning_graph", lambda models: graph)
+
+    cli.run("Reducer", material_sources=[str(material_path)])
+
+    assert graph.initial_state is not None
+    assert graph.initial_state["study_chunks"][0]["source_name"] == "lesson.txt"
+    assert graph.initial_state["study_chunks"][0]["location"] == "document"
+    assert graph.initial_state["ingestion_report"]["sources_added"] == 1
+
+
+def test_main_accepts_repeatable_material_arguments(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        cli,
+        "run",
+        lambda topic, **kwargs: calls.append(list(kwargs.get("material_sources", []))),
+    )
+
+    cli.main(
+        [
+            "LangGraph",
+            "--material",
+            "paper.pdf",
+            "--material",
+            "https://example.com/course",
+        ]
+    )
+
+    assert calls == [["paper.pdf", "https://example.com/course"]]
+
+
+def test_material_sources_reject_missing_file() -> None:
+    with pytest.raises(ValueError, match="找不到学习资料"):
+        material_inputs_from_sources(["/missing/private/secret.txt"])
