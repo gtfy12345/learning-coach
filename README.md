@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取与自校正 Hybrid RAG 扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取、自校正 Hybrid RAG 与 GraphRAG 知识前置图扩展：
 
 ```mermaid
 flowchart LR
@@ -37,6 +37,8 @@ flowchart LR
 - BM25 与 Dense 双路召回、RRF 融合、确定性重排和带来源讲解
 - 证据质量判断、上下文感知查询改写和最多两次的自校正检索
 - 可追溯的通道分数、检索尝试与安全降级报告，以及 Runnable 图导出
+- 默认离线的实体关系抽取、别名消歧、概念图和可注入结构化模型增强
+- 有界前置图遍历、图与 Hybrid RRF 融合及“为什么要先补这个概念”的证据链
 - Runnable 的同步、异步、批处理与流式执行，以及 Web SSE、取消和超时
 - 默认关闭的 LangSmith 任务追踪标签与安全元数据
 - `LearningRuntimeContext` 中一次会话不可变的学习目标与模型/工具预算
@@ -139,6 +141,7 @@ PYTHONPATH=src python -m learning_coach web
 - 输入一个或多个课程网页 URL，并在讲解阶段显示文件名、页码、章节、幻灯片或代码行范围
 - 显示本次摄取的新增、更新、跳过和 Chunk 统计
 - 显示 Hybrid RAG 尝试次数、证据质量、查询改写和最终来源相关度
+- 显示 GraphRAG 概念节点、带方向关系、前置路径、补课原因和来源位置
 - 提交诊断回答，查看针对性讲解和迁移练习
 - 提交练习答案，查看结构化评分、反馈和知识缺口
 - 未达到 80 分时自动补讲并继续出题，最多评价两次
@@ -158,7 +161,7 @@ PYTHONPATH=src python -m learning_coach web
 | `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
-| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、state 和 done 事件 |
+| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、knowledge_graph、state 和 done 事件 |
 
 两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
 
@@ -282,6 +285,33 @@ EMBEDDING_MODEL_ID=openai:text-embedding-3-small
 
 每次最多召回 8 个候选并选出 3 个来源。首轮证据不足时，系统把学习主题、诊断重点、反馈、知识缺口、最近错误和目标加入查询，最多改写一次；第二轮无论质量如何都结束。最终 `RetrievalReport` 记录原始/最终查询、是否改写、证据质量、Embedding 标识和每轮候选数量，`StudySource` 记录 BM25、Dense、RRF 与重排分数。Web 只显示尝试次数、质量、是否改写和最终来源相关度，不显示未选中正文或向量。
 
+### GraphRAG 与知识前置图
+
+第 7 阶段在 Hybrid RAG 之上增加教学概念图。系统先从当前会话的 Chunk 中做实体关系抽取，再把显式全称/缩写、Unicode、大小写和代码标识符变体交给别名消歧。当前支持四类带方向关系：`prerequisite_of` 表示“前置概念 → 目标概念”，`defines` 表示定义关系，`part_of` 表示组成关系，`related_to` 表示一般关联；每个节点和关系都保留来源 Chunk ID。
+
+```mermaid
+flowchart LR
+    C[位置感知 Chunk] --> E[实体关系抽取]
+    E --> D[规范化与别名消歧]
+    D --> G[会话级概念图]
+    Q[教学查询与最近错误] --> H[自校正 Hybrid RAG]
+    H --> S[查询与命中 Chunk 选图种子]
+    G --> T[反向遍历 prerequisite_of]
+    S --> T
+    H --> F[图与 Hybrid 排名再次通过 RRF 融合]
+    T --> F
+    T --> P[前置路径与补课原因]
+    F --> O[最终教学来源]
+```
+
+默认 `DeterministicGraphExtractor` 不调用模型或网络。它识别中英文的“是……的前置知识”“学习……前先理解……”“requires”“is a prerequisite for”等显式句式，并从 Markdown 标题和代码标识符补充概念实体。实体规范化会合并 `StateGraph` / `state_graph` 一类高置信变体和“全称（缩写）”显式别名；类型不兼容且没有别名证据的同名实体保持独立，宁可少合并也不制造关系。
+
+项目同时提供可注入的 `StructuredModelGraphExtractor` 和 `ModelAugmentedGraphExtractor`。模型增强只有显式注入才会调用，不新增环境变量，也不会在默认 Web/CLI 路径产生额外模型费用。模型输出必须通过 Pydantic 校验，并且只能引用本轮输入的 Chunk；非法结构、未知 Chunk 或模型异常都会回到离线结果，对外不返回异常正文。
+
+图谱与遍历都有硬上限：每次最多分析 24 个 Chunk、每个读取 4,000 字符，图中最多 80 个节点和 160 条关系；反向 BFS 深度最多 3、最多访问 24 个节点、最多返回 5 条前置路径，并使用 visited 和当前路径集合阻止环。图证据按路径距离、关系置信度和查询匹配排名，再与 Hybrid 排名做 RRF；最终仍最多返回 3 个来源。无有效关系、无种子或图增强失败时，原 Hybrid 来源与检索报告保持可用。
+
+`GraphRAGReport` 只保存安全、有界的节点、关系、种子、扩展节点、路径和来源位置，不保存向量、密钥、异常正文或未选中全文。概念图是从 `StudyChunkRecord` 派生的运行时状态，不回写原文件、Chunk 或增量索引。当前实现不引入图数据库，也不跨会话持久化概念图。
+
 也可以把模型切换到 Google Gemini：
 
 ```dotenv
@@ -387,7 +417,7 @@ questions = tasks.quiz.batch(
 flowchart LR
     I[教学任务输入] --> P[RunnableParallel]
     P --> K[RunnablePassthrough 保留任务]
-    P --> R[RunnableLambda Hybrid 检索]
+    P --> R[RunnableLambda Graph + Hybrid 检索]
     K --> A[RunnableAssign 补充上下文]
     R --> A
     A --> S[RunnableSequence]
@@ -395,7 +425,7 @@ flowchart LR
     O --> G[讲解文本与来源]
 ```
 
-Hybrid Retriever 优先检索多模态摄取管线生成的结构化 Chunk，同时兼容原来最多 50,000 字的粘贴文本。LCEL 路径与讲解 Agent 工具共享同一个 Retriever；最终来源和报告写入 `GroundedTeaching`、LangGraph State，并通过 Web JSON/SSE 返回。
+GraphStudyRetriever 先执行原有 Hybrid Retriever，再用概念图扩展前置证据，同时兼容原来最多 50,000 字的粘贴文本。LCEL 路径与讲解 Agent 工具共享同一个 Retriever；最终来源、检索报告和 GraphRAG 报告写入 `GroundedTeaching`、LangGraph State，并通过 Web JSON/SSE 返回。
 
 可以导出任一任务的 Mermaid 组合图：
 
@@ -461,6 +491,7 @@ learning-coach/
 │       ├── graph.py
 │       ├── hybrid_rag.py
 │       ├── ingestion.py
+│       ├── knowledge_graph.py
 │       ├── loaders.py
 │       ├── media.py
 │       ├── middleware.py
@@ -483,6 +514,7 @@ learning-coach/
     ├── test_graph.py
     ├── test_hybrid_rag.py
     ├── test_ingestion.py
+    ├── test_knowledge_graph.py
     ├── test_loaders.py
     ├── test_media.py
     ├── test_middleware.py
@@ -497,6 +529,7 @@ learning-coach/
 - `ingestion.py`：定义资料输入、Metadata、位置感知 Splitter、SHA-256 和会话级增量索引。
 - `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
 - `hybrid_rag.py`：实现本地/Provider Embedding、BM25、Dense、RRF、重排、质量判断和有界查询改写。
+- `knowledge_graph.py`：实现实体关系抽取、别名消歧、概念图、有界前置遍历、图证据排名和 GraphRAG 包装器。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
@@ -524,7 +557,7 @@ learning-coach/
 | 4 | Context Engineering 与 Middleware | Runtime Context、动态 Prompt/Tools/Model、摘要和预算 |
 | 5 | 多模态学习资料摄取 | Loader、Splitter、Metadata、Hash、增量索引及文件/网页/图片/代码来源位置 |
 | 6 | 自校正 Hybrid RAG | 检索、重排、查询改写与证据质量判断 |
-| 7 | GraphRAG 与知识前置图 | 生成概念图谱并定位前置知识缺口 |
+| 7 | GraphRAG 与知识前置图 | 实体关系抽取、别名消歧、有界图遍历、图/向量融合和可追溯前置解释 |
 | 8 | Tool Calling、ReAct 与代码实践 | 运行代码测试并提供分级提示 |
 | 9 | LangGraph 状态图进阶 | 处理并行、重试、缓存和循环终止 |
 | 10 | 多 Agent 与任务编排 | 研究、教师、练习与审查 Agent 分工 |
@@ -548,6 +581,8 @@ learning-coach/
 - 默认 `local:hash-v1` 是离线特征哈希，不等同于神经语义 Embedding；语义质量取决于显式选择的 Provider 模型。
 - Hybrid RAG 只检索当前会话内存中的 Chunk；候选上限为 8、最终来源上限为 3、检索上限为两次，不会自动扩展到外部知识库。
 - 确定性质量阈值是检索启发式指标，不保证资料事实正确，也不能替代人工核验；证据不足的第二轮仍会按上限终止。
+- 默认 GraphRAG 只识别显式句式、标题和代码标识符，可能漏掉隐含关系；模型增强只有显式注入才启用，并仍需人工核验抽取关系。
+- 概念图只存在于当前会话 State，不引入图数据库；前置解释表示“资料声明了这条依赖路径”，不等同于系统客观测得了学习者掌握状态。
 - SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。

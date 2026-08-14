@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -705,4 +707,26 @@ def test_graph_retriever_factory_wraps_explicit_hybrid_configuration() -> None:
 
     assert isinstance(retriever, GraphStudyRetriever)
     assert retriever.settings.embedding_model_id == "local:hash-v1"
+
+
+def test_public_docs_describe_graphrag_capabilities_and_boundaries() -> None:
+    readme = (Path(__file__).parents[1] / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    for term in (
+        "GraphRAG 与知识前置图",
+        "prerequisite_of",
+        "实体关系抽取",
+        "别名消歧",
+        "图与 Hybrid 排名再次通过 RRF 融合",
+        "深度最多 3",
+        "最多访问 24 个节点",
+        "最多返回 5 条前置路径",
+        "模型增强只有显式注入",
+        "不引入图数据库",
+        "knowledge_graph",
+        "knowledge_graph.py",
+    ):
+        assert term in readme
     build_concept_graph,

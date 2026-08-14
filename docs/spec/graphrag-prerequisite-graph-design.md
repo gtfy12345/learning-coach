@@ -1,7 +1,7 @@
 # GraphRAG 与知识前置图设计文档
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-15
 
 ## 1 概述
@@ -13,7 +13,7 @@
 ## 2 设计目标
 
 - 从中英文教学资料、标题和代码标识符中抽取有界概念实体。
-- 识别 `prerequisite_of`、`part_of`、`related_to` 三类教学关系并保留证据 Chunk。
+- 识别 `prerequisite_of`、`defines`、`part_of`、`related_to` 四类教学关系并保留证据 Chunk。
 - 通过 Unicode 规范化、大小写与标识符归一化、显式别名和上下文相似度完成确定性消歧。
 - 从当前主题、诊断重点、知识缺口和最近错误选择图种子，反向遍历前置关系。
 - 将图遍历排名与现有 Hybrid RAG 最终排名用 RRF 融合，不直接混合不同量纲的原始分数。
@@ -78,7 +78,7 @@ flowchart LR
 
 ### 4.3 遍历与解释接口
 
-`find_prerequisite_paths(graph, target_concepts, gap_context)`：
+`traverse_prerequisites(graph, seed_concepts, ...)`：
 
 - 只沿 `prerequisite_of` 的反方向查找目标概念依赖项。
 - BFS 最大深度 3、最多访问 24 个节点、最多返回 5 条路径。
@@ -110,7 +110,7 @@ flowchart LR
 
 - `relation_id`：源、目标、关系类型的稳定 SHA-256。
 - `from_concept_id` / `to_concept_id`：方向明确的端点。
-- `relation_type`：`prerequisite_of|part_of|related_to`。
+- `relation_type`：`prerequisite_of|defines|part_of|related_to`。
 - `confidence`：`[0, 1]`。
 - `evidence_chunk_ids`：最多 8 个来源 Chunk ID。
 

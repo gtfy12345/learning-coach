@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-15](./2026-08-15-graphrag-prerequisite-graph-assessment.md) | GraphRAG 与知识前置图交付复盘 | #assessment |
 | [2026-08-14](./2026-08-14-self-corrective-hybrid-rag-assessment.md) | 自校正 Hybrid RAG 交付复盘 | #assessment |
 | [2026-08-14](./2026-08-14-multimodal-material-ingestion-assessment.md) | 多模态学习资料摄取交付复盘 | #assessment |
 | [2026-08-13](./2026-08-13-context-engineering-middleware-assessment.md) | Context Engineering 与 Middleware 交付复盘 | #assessment |
