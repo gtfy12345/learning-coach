@@ -5,13 +5,16 @@ from pydantic import ValidationError
 
 from learning_coach.hybrid_rag import (
     BoundedEmbeddingCache,
+    HybridStudyRetriever,
     LocalHashEmbeddings,
     RagSettings,
+    assess_evidence_quality,
     bm25_retrieve,
     create_embeddings,
     dense_retrieve,
     reciprocal_rank_fusion,
     rerank_candidates,
+    rewrite_retrieval_query,
 )
 from learning_coach.ingestion import StudyChunkRecord
 from learning_coach.schemas import (
@@ -384,6 +387,223 @@ def test_rrf_and_reranker_validate_limits_and_keep_stable_ties() -> None:
         reciprocal_rank_fusion(ranked, [], limit=0)
     with pytest.raises(ValueError, match="top_k"):
         rerank_candidates("Reducer", fused, top_k=0, attempt=1)
+
+
+def test_evidence_quality_distinguishes_sufficient_insufficient_and_empty() -> None:
+    exact = StudySource(
+        source_id="exact",
+        text="Reducer 合并 LangGraph 并行 State 更新。",
+        score=0.82,
+        source_name="graph.md",
+    )
+    unrelated = StudySource(
+        source_id="unrelated",
+        text="CSS Grid 定义二维页面布局。",
+        score=0.9,
+        source_name="css.md",
+    )
+
+    sufficient = assess_evidence_quality(
+        "LangGraph Reducer 合并状态", [exact]
+    )
+    insufficient = assess_evidence_quality(
+        "LangGraph Reducer 合并状态", [unrelated]
+    )
+    empty = assess_evidence_quality("LangGraph Reducer", [])
+
+    assert sufficient.quality == "sufficient"
+    assert sufficient.coverage >= 0.4
+    assert sufficient.top_score == 0.82
+    assert sufficient.source_count == 1
+    assert insufficient.quality == "insufficient"
+    assert insufficient.coverage == 0
+    assert empty.quality == "empty"
+    assert empty.reason == "没有检索到正相关证据"
+
+
+def test_evidence_quality_requires_score_and_coverage_thresholds() -> None:
+    low_score = StudySource(
+        source_id="low",
+        text="Reducer 合并状态",
+        score=0.59,
+    )
+    low_coverage = StudySource(
+        source_id="partial",
+        text="Reducer",
+        score=0.95,
+    )
+
+    assert (
+        assess_evidence_quality("Reducer 合并状态", [low_score]).quality
+        == "insufficient"
+    )
+    assert (
+        assess_evidence_quality("Reducer 合并状态", [low_coverage]).quality
+        == "insufficient"
+    )
+
+
+def test_query_rewriter_adds_learning_context_once_in_stable_order() -> None:
+    rewritten = rewrite_retrieval_query(
+        "怎么处理并发写入",
+        {
+            "topic": "LangGraph Reducer",
+            "diagnostic_focus": "Reducer 合并语义",
+            "feedback": "需要解释列表状态",
+            "missing_point": "Reducer 合并语义",
+            "recent_errors": ["状态覆盖", "Reducer 合并语义"],
+            "learning_goal": "能够设计并行 State 更新",
+        },
+    )
+
+    assert rewritten.startswith("怎么处理并发写入；LangGraph Reducer")
+    assert rewritten.count("Reducer 合并语义") == 1
+    assert "状态覆盖" in rewritten
+    assert "能够设计并行 State 更新" in rewritten
+
+
+def test_query_rewriter_ignores_placeholders_and_bounds_output() -> None:
+    assert rewrite_retrieval_query("  Reducer   合并  ", {}) == "Reducer 合并"
+    assert rewrite_retrieval_query("", {"topic": "暂无"}) == ""
+
+    rewritten = rewrite_retrieval_query(
+        "query",
+        {"topic": "x" * 2_000, "feedback": "none", "recent_errors": []},
+        max_chars=100,
+    )
+    assert len(rewritten) <= 100
+    assert "none" not in rewritten
+
+    with pytest.raises(ValueError, match="max_chars"):
+        rewrite_retrieval_query("query", {}, max_chars=0)
+
+
+class _ContextAwareEmbeddings:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.document_calls = 0
+        self.query_calls = 0
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_calls += 1
+        if self.fail:
+            raise RuntimeError("provider-secret")
+        return [
+            [1.0, 0.0] if "Reducer" in text else [0.0, 1.0]
+            for text in texts
+        ]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_calls += 1
+        if self.fail:
+            raise RuntimeError("provider-secret")
+        if "Reducer" in text:
+            return [1.0, 0.0]
+        if "CSS" in text:
+            return [0.0, 1.0]
+        return [0.0, 0.0]
+
+
+def test_hybrid_retriever_stops_after_sufficient_first_attempt() -> None:
+    embeddings = _ContextAwareEmbeddings()
+    retriever = HybridStudyRetriever(
+        settings=RagSettings(embedding_model_id="fake:model"),
+        embeddings=embeddings,
+    )
+
+    result = retriever.retrieve(
+        "Reducer 合并",
+        [_chunk("Reducer 合并并行 State。", index=1)],
+        rewrite_context={"topic": "LangGraph"},
+    )
+
+    assert result.sources
+    assert result.report.quality == "sufficient"
+    assert not result.report.rewritten
+    assert len(result.report.attempts) == 1
+    assert result.sources[0].retrieval_attempt == 1
+    assert embeddings.query_calls == 1
+
+
+def test_hybrid_retriever_rewrites_once_and_uses_improved_evidence() -> None:
+    embeddings = _ContextAwareEmbeddings()
+    retriever = HybridStudyRetriever(
+        settings=RagSettings(embedding_model_id="fake:model"),
+        embeddings=embeddings,
+    )
+
+    result = retriever.retrieve(
+        "怎么处理并发写入",
+        [_chunk("Reducer 合并并行 State 更新。", index=1)],
+        rewrite_context={
+            "topic": "LangGraph Reducer",
+            "diagnostic_focus": "Reducer 合并",
+        },
+    )
+
+    assert result.report.rewritten
+    assert len(result.report.attempts) == 2
+    assert result.report.attempts[0].quality == "empty"
+    assert result.report.attempts[1].quality == "sufficient"
+    assert "LangGraph Reducer" in result.report.final_query
+    assert result.sources[0].retrieval_attempt == 2
+    assert embeddings.document_calls == 1
+    assert embeddings.query_calls == 2
+
+
+def test_hybrid_retriever_terminates_after_two_insufficient_attempts() -> None:
+    embeddings = _ContextAwareEmbeddings()
+    retriever = HybridStudyRetriever(
+        settings=RagSettings(embedding_model_id="fake:model"),
+        embeddings=embeddings,
+    )
+
+    result = retriever.retrieve(
+        "数据库事务",
+        [_chunk("CSS Grid 页面布局。", index=1)],
+        rewrite_context={"topic": "SQL 隔离级别"},
+    )
+
+    assert result.sources == []
+    assert result.report.quality == "empty"
+    assert result.report.rewritten
+    assert len(result.report.attempts) == 2
+    assert embeddings.query_calls == 2
+
+
+def test_hybrid_retriever_reports_embedding_degradation_and_keeps_bm25() -> None:
+    retriever = HybridStudyRetriever(
+        settings=RagSettings(embedding_model_id="broken:model"),
+        embeddings=_ContextAwareEmbeddings(fail=True),
+    )
+
+    result = retriever.retrieve(
+        "Reducer 合并",
+        [_chunk("Reducer 合并并行状态。", index=1)],
+    )
+
+    assert result.sources
+    assert result.report.attempts[0].embedding_degraded
+    assert result.report.attempts[0].degradation_reason == "embedding_unavailable"
+    assert "secret" not in result.report.model_dump_json()
+
+
+def test_hybrid_retriever_does_not_rewrite_without_chunks() -> None:
+    retriever = HybridStudyRetriever(
+        settings=RagSettings(),
+        embeddings=LocalHashEmbeddings(),
+    )
+
+    result = retriever.retrieve(
+        "Reducer",
+        [],
+        rewrite_context={"topic": "LangGraph"},
+    )
+
+    assert result.sources == []
+    assert result.report.quality == "empty"
+    assert not result.report.rewritten
+    assert len(result.report.attempts) == 1
     with pytest.raises(ValidationError, match="vector"):
         RetrievalAttempt.model_validate(
             {

@@ -4,10 +4,17 @@ import re
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
-from learning_coach.schemas import RetrievalScore, StudySource
+from learning_coach.schemas import (
+    RetrievalAttempt,
+    RetrievalQuality,
+    RetrievalReport,
+    RetrievalScore,
+    StudySource,
+)
 
 DEFAULT_EMBEDDING_MODEL_ID = "local:hash-v1"
 DEFAULT_EMBEDDING_DIMENSIONS = 256
@@ -28,6 +35,14 @@ class RagSettings:
     candidate_k: int = DEFAULT_RAG_CANDIDATE_K
     top_k: int = DEFAULT_RAG_TOP_K
     max_attempts: int = MAX_RAG_ATTEMPTS
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.candidate_k <= DEFAULT_RAG_CANDIDATE_K:
+            raise ValueError("candidate_k 必须在 1 到 8 之间。")
+        if not 1 <= self.top_k <= DEFAULT_RAG_TOP_K:
+            raise ValueError("top_k 必须在 1 到 3 之间。")
+        if self.max_attempts != MAX_RAG_ATTEMPTS:
+            raise ValueError("max_attempts 固定为 2。")
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str]) -> "RagSettings":
@@ -72,6 +87,34 @@ class FusedChunk:
     fusion_score: float
 
 
+@dataclass(frozen=True)
+class EvidenceQualityResult:
+    """Deterministic evidence sufficiency decision for one attempt."""
+
+    quality: RetrievalQuality
+    reason: str
+    top_score: float
+    coverage: float
+    candidate_count: int
+    source_count: int
+
+
+@dataclass(frozen=True)
+class HybridRetrievalResult:
+    """Selected teaching evidence and its bounded retrieval trace."""
+
+    sources: list[StudySource]
+    report: RetrievalReport
+
+
+@dataclass(frozen=True)
+class _AttemptResult:
+    query: str
+    sources: list[StudySource]
+    quality: EvidenceQualityResult
+    trace: RetrievalAttempt
+
+
 def _embedding_features(text: str) -> Counter[str]:
     normalized = text.casefold()
     features = Counter(_LATIN_TOKEN.findall(normalized))
@@ -95,6 +138,16 @@ def _lexical_terms(text: str) -> Counter[str]:
             for index in range(len(run) - size + 1):
                 terms[run[index : index + size]] += 1
     return terms
+
+
+def _query_coverage(query: str, text: str) -> float:
+    text_terms = set(_lexical_terms(text))
+    coverages: list[float] = []
+    for clause in query.split("；"):
+        query_terms = set(_lexical_terms(clause))
+        if query_terms:
+            coverages.append(len(query_terms & text_terms) / len(query_terms))
+    return max(coverages, default=0.0)
 
 
 def bm25_retrieve(
@@ -311,16 +364,10 @@ def rerank_candidates(
         raise ValueError("top_k 必须是正整数。")
     if attempt not in {1, 2}:
         raise ValueError("attempt 必须是 1 或 2。")
-    query_terms = set(_lexical_terms(query))
     normalized_query = " ".join(query.casefold().split())
     ranked: list[tuple[int, FusedChunk, float]] = []
     for order, candidate in enumerate(candidates):
-        text_terms = set(_lexical_terms(candidate.chunk.text))
-        coverage = (
-            len(query_terms & text_terms) / len(query_terms)
-            if query_terms
-            else 0.0
-        )
+        coverage = _query_coverage(query, candidate.chunk.text)
         normalized_text = " ".join(candidate.chunk.text.casefold().split())
         phrase = float(bool(normalized_query and normalized_query in normalized_text))
         agreement = float(
@@ -365,6 +412,203 @@ def rerank_candidates(
             )
         )
     return sources
+
+
+def assess_evidence_quality(
+    query: str,
+    sources: Sequence[StudySource],
+    *,
+    minimum_score: float = 0.6,
+    minimum_coverage: float = 0.4,
+) -> EvidenceQualityResult:
+    """Judge whether selected evidence is relevant enough for teaching."""
+
+    if not sources:
+        return EvidenceQualityResult(
+            quality="empty",
+            reason="没有检索到正相关证据",
+            top_score=0.0,
+            coverage=0.0,
+            candidate_count=0,
+            source_count=0,
+        )
+    coverage = max(
+        _query_coverage(query, source.text)
+        for source in sources
+    )
+    top_score = max(source.score for source in sources)
+    source_count = len(
+        {
+            source.source_uri or source.source_name or source.source_id
+            for source in sources
+        }
+    )
+    sufficient = (
+        top_score >= minimum_score and coverage >= minimum_coverage
+    )
+    if sufficient:
+        reason = "相关度和查询覆盖率达到阈值"
+        quality: RetrievalQuality = "sufficient"
+    elif top_score < minimum_score and coverage < minimum_coverage:
+        reason = "相关度和查询覆盖率均不足"
+        quality = "insufficient"
+    elif top_score < minimum_score:
+        reason = "最高重排分不足"
+        quality = "insufficient"
+    else:
+        reason = "查询词覆盖率不足"
+        quality = "insufficient"
+    return EvidenceQualityResult(
+        quality=quality,
+        reason=reason,
+        top_score=round(top_score, 6),
+        coverage=round(coverage, 6),
+        candidate_count=len(sources),
+        source_count=source_count,
+    )
+
+
+def rewrite_retrieval_query(
+    query: str,
+    context: Mapping[str, Any],
+    *,
+    max_chars: int = 1_000,
+) -> str:
+    """Expand a weak query with bounded, deduplicated teaching context."""
+
+    if max_chars <= 0:
+        raise ValueError("max_chars 必须是正整数。")
+    ignored = {"", "暂无", "none", "无", "n/a", "[]"}
+    clauses: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            for item in value:
+                add(item)
+            return
+        normalized = " ".join(str(value or "").split())
+        key = normalized.casefold()
+        if key in ignored or key in seen:
+            return
+        seen.add(key)
+        clauses.append(normalized)
+
+    add(query)
+    for field in (
+        "topic",
+        "diagnostic_focus",
+        "feedback",
+        "missing_point",
+        "recent_errors",
+        "learning_goal",
+    ):
+        add(context.get(field))
+    return "；".join(clauses)[:max_chars].rstrip("； ")
+
+
+class HybridStudyRetriever:
+    """Run bounded Hybrid RAG with one deterministic corrective retry."""
+
+    def __init__(
+        self,
+        *,
+        settings: RagSettings | None = None,
+        embeddings: Embeddings | None = None,
+        cache: "BoundedEmbeddingCache | None" = None,
+    ) -> None:
+        self.settings = settings or RagSettings()
+        self.embeddings = embeddings or create_embeddings(self.settings)
+        self.cache = cache or BoundedEmbeddingCache()
+
+    def retrieve(
+        self,
+        query: str,
+        chunks: Sequence["StudyChunkRecord"],
+        *,
+        rewrite_context: Mapping[str, Any] | None = None,
+    ) -> HybridRetrievalResult:
+        normalized_query = " ".join(query.split())
+        if not normalized_query:
+            raise ValueError("检索查询不能为空。")
+
+        attempts = [self._attempt(normalized_query, chunks, attempt=1)]
+        if (
+            attempts[0].quality.quality != "sufficient"
+            and chunks
+            and self.settings.max_attempts > 1
+        ):
+            rewritten = rewrite_retrieval_query(
+                normalized_query, rewrite_context or {}
+            )
+            if rewritten and rewritten != normalized_query:
+                attempts.append(self._attempt(rewritten, chunks, attempt=2))
+
+        quality_rank = {"empty": 0, "insufficient": 1, "sufficient": 2}
+        best = max(
+            attempts,
+            key=lambda item: (
+                quality_rank[item.quality.quality],
+                item.quality.top_score,
+            ),
+        )
+        report = RetrievalReport(
+            original_query=normalized_query,
+            final_query=best.query,
+            rewritten=len(attempts) == 2,
+            quality=best.quality.quality,
+            embedding_model_id=self.settings.embedding_model_id,
+            attempts=[item.trace for item in attempts],
+        )
+        return HybridRetrievalResult(sources=best.sources, report=report)
+
+    def _attempt(
+        self,
+        query: str,
+        chunks: Sequence["StudyChunkRecord"],
+        *,
+        attempt: int,
+    ) -> _AttemptResult:
+        keyword = bm25_retrieve(
+            query, chunks, limit=self.settings.candidate_k
+        )
+        dense = dense_retrieve(
+            query,
+            chunks,
+            embeddings=self.embeddings,
+            embedding_model_id=self.settings.embedding_model_id,
+            cache=self.cache,
+            limit=self.settings.candidate_k,
+        )
+        fused = reciprocal_rank_fusion(
+            keyword, dense.ranked, limit=self.settings.candidate_k
+        )
+        sources = rerank_candidates(
+            query,
+            fused,
+            top_k=self.settings.top_k,
+            attempt=attempt,
+        )
+        quality = assess_evidence_quality(query, sources)
+        trace = RetrievalAttempt(
+            attempt=attempt,
+            query=query,
+            keyword_candidates=len(keyword),
+            embedding_candidates=len(dense.ranked),
+            selected_candidates=len(sources),
+            quality=quality.quality,
+            reason=quality.reason,
+            embedding_degraded=dense.degraded,
+            degradation_reason=dense.reason,
+        )
+        return _AttemptResult(
+            query=query,
+            sources=sources,
+            quality=quality,
+            trace=trace,
+        )
 
 
 class LocalHashEmbeddings(Embeddings):
