@@ -7,8 +7,13 @@ from learning_coach.hybrid_rag import (
     BoundedEmbeddingCache,
     LocalHashEmbeddings,
     RagSettings,
+    bm25_retrieve,
     create_embeddings,
+    dense_retrieve,
+    reciprocal_rank_fusion,
+    rerank_candidates,
 )
+from learning_coach.ingestion import StudyChunkRecord
 from learning_coach.schemas import (
     GroundedTeaching,
     RetrievalAttempt,
@@ -16,6 +21,32 @@ from learning_coach.schemas import (
     RetrievalScore,
     StudySource,
 )
+
+
+def _chunk(
+    text: str,
+    *,
+    index: int,
+    source_name: str = "notes.md",
+) -> StudyChunkRecord:
+    token = f"{index:064x}"
+    return StudyChunkRecord(
+        source_id="a" * 64,
+        source_key=f"upload:{source_name}",
+        source_type="text",
+        source_name=source_name,
+        source_uri=source_name,
+        mime_type="text/markdown",
+        content_hash="b" * 64,
+        location_type="paragraph",
+        location=f"paragraph {index}",
+        chunk_id=token,
+        chunk_hash=token,
+        chunk_index=index,
+        char_start=0,
+        char_end=len(text),
+        text=text,
+    )
 
 
 def test_local_hash_embeddings_are_stable_normalized_and_ordered() -> None:
@@ -172,6 +203,187 @@ def test_retrieval_schemas_reject_invalid_scores_attempts_and_vectors() -> None:
                 for index in (1, 2, 2)
             ],
         )
+
+
+def test_bm25_retrieval_ranks_terms_and_normalizes_scores() -> None:
+    chunks = [
+        _chunk("LangGraph Reducer 合并并行 State 更新。", index=1),
+        _chunk("Reducer 是一个函数。", index=2),
+        _chunk("CSS Grid 定义二维页面布局。", index=3),
+    ]
+
+    ranked = bm25_retrieve("LangGraph Reducer 合并状态", chunks, limit=2)
+
+    assert [item.chunk.chunk_id for item in ranked] == [
+        chunks[0].chunk_id,
+        chunks[1].chunk_id,
+    ]
+    assert ranked[0].score == pytest.approx(1.0)
+    assert 0 < ranked[1].score < ranked[0].score
+
+
+def test_bm25_retrieval_applies_length_normalization_and_stable_ties() -> None:
+    short = _chunk("Reducer", index=1)
+    long = _chunk("Reducer " + "无关内容 " * 30, index=2)
+    tie = _chunk("Reducer", index=3, source_name="second.md")
+
+    ranked = bm25_retrieve("Reducer", [short, long, tie], limit=8)
+
+    assert [item.chunk.chunk_id for item in ranked] == [
+        short.chunk_id,
+        tie.chunk_id,
+        long.chunk_id,
+    ]
+
+
+def test_bm25_retrieval_handles_chinese_no_match_and_limits() -> None:
+    chunks = [
+        _chunk("条件边根据分数选择补救或总结。", index=1),
+        _chunk("条件路由必须覆盖全部分支。", index=2),
+        _chunk("CSS Grid 页面布局。", index=3),
+    ]
+
+    assert len(bm25_retrieve("条件", chunks, limit=1)) == 1
+    assert bm25_retrieve("数据库事务", chunks, limit=8) == []
+    with pytest.raises(ValueError, match="limit"):
+        bm25_retrieve("条件", chunks, limit=0)
+
+
+class _FakeEmbeddings:
+    def __init__(self) -> None:
+        self.document_calls = 0
+        self.query_calls = 0
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_calls += 1
+        return [
+            [1.0, 0.0] if "Reducer" in text else [0.0, 1.0]
+            for text in texts
+        ]
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_calls += 1
+        return [1.0, 0.0]
+
+
+def test_dense_retrieval_uses_cosine_similarity_and_document_cache() -> None:
+    chunks = [
+        _chunk("Reducer 合并状态。", index=1),
+        _chunk("CSS Grid 页面布局。", index=2),
+    ]
+    embeddings = _FakeEmbeddings()
+    cache = BoundedEmbeddingCache(max_entries=8)
+
+    first = dense_retrieve(
+        "如何合并并行状态",
+        chunks,
+        embeddings=embeddings,
+        embedding_model_id="fake:model",
+        cache=cache,
+        limit=8,
+    )
+    second = dense_retrieve(
+        "再次查询",
+        chunks,
+        embeddings=embeddings,
+        embedding_model_id="fake:model",
+        cache=cache,
+        limit=8,
+    )
+
+    assert not first.degraded
+    assert [item.chunk.chunk_id for item in first.ranked] == [chunks[0].chunk_id]
+    assert first.ranked[0].score == pytest.approx(1.0)
+    assert second.ranked[0].chunk.chunk_id == chunks[0].chunk_id
+    assert embeddings.document_calls == 1
+    assert embeddings.query_calls == 2
+
+
+@pytest.mark.parametrize("mode", ["error", "dimension", "non_finite"])
+def test_dense_retrieval_degrades_safely_for_embedding_failures(mode: str) -> None:
+    class BrokenEmbeddings:
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            if mode == "error":
+                raise RuntimeError("secret-api-key")
+            if mode == "dimension":
+                return [[1.0, 0.0], [1.0]]
+            return [[math.nan, 0.0], [0.0, 1.0]]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [1.0, 0.0]
+
+    result = dense_retrieve(
+        "Reducer",
+        [_chunk("Reducer", index=1), _chunk("CSS", index=2)],
+        embeddings=BrokenEmbeddings(),
+        embedding_model_id="broken:model",
+        cache=BoundedEmbeddingCache(max_entries=8),
+        limit=8,
+    )
+
+    assert result.ranked == []
+    assert result.degraded
+    assert result.reason == "embedding_unavailable"
+    assert "secret" not in result.reason
+
+
+def test_rrf_fuses_duplicate_candidates_and_normalizes_ranks() -> None:
+    first = _chunk("Reducer 合并状态。", index=1)
+    shared = _chunk("Reducer 并行更新。", index=2)
+    semantic = _chunk("并发写入需要组合规则。", index=3)
+
+    keyword = bm25_retrieve("Reducer", [first, shared, semantic], limit=8)
+    dense = [
+        type(keyword[0])(chunk=shared, score=1.0),
+        type(keyword[0])(chunk=semantic, score=0.8),
+    ]
+    fused = reciprocal_rank_fusion(keyword, dense, limit=8)
+
+    assert fused[0].chunk.chunk_id == shared.chunk_id
+    assert fused[0].fusion_score == pytest.approx(1.0)
+    assert fused[0].keyword_score > 0
+    assert fused[0].embedding_score == 1.0
+    assert len({item.chunk.chunk_id for item in fused}) == len(fused)
+
+
+def test_reranker_uses_query_coverage_phrase_and_channel_agreement() -> None:
+    exact = _chunk("Reducer 合并并行状态。", index=1)
+    partial = _chunk("Reducer 是一个函数。", index=2)
+    keyword = bm25_retrieve("Reducer 合并", [partial, exact], limit=8)
+    dense = [
+        type(keyword[0])(chunk=partial, score=1.0),
+        type(keyword[0])(chunk=exact, score=0.7),
+    ]
+
+    fused = reciprocal_rank_fusion(keyword, dense, limit=8)
+    sources = rerank_candidates("Reducer 合并", fused, top_k=1, attempt=2)
+
+    assert len(sources) == 1
+    assert sources[0].source_id == exact.chunk_id
+    assert sources[0].source_name == exact.source_name
+    assert sources[0].location == exact.location
+    assert sources[0].retrieval_attempt == 2
+    assert sources[0].retrieval_score is not None
+    assert sources[0].score == sources[0].retrieval_score.rerank
+    assert 0 < sources[0].retrieval_score.fusion <= 1
+
+
+def test_rrf_and_reranker_validate_limits_and_keep_stable_ties() -> None:
+    first = _chunk("Reducer", index=1)
+    second = _chunk("Reducer", index=2, source_name="other.md")
+    ranked = bm25_retrieve("Reducer", [first, second], limit=8)
+
+    fused = reciprocal_rank_fusion(ranked, [], limit=8)
+    sources = rerank_candidates("Reducer", fused, top_k=2, attempt=1)
+
+    assert [source.source_id for source in sources] == [
+        first.chunk_id,
+        second.chunk_id,
+    ]
+    with pytest.raises(ValueError, match="limit"):
+        reciprocal_rank_fusion(ranked, [], limit=0)
+    with pytest.raises(ValueError, match="top_k"):
+        rerank_candidates("Reducer", fused, top_k=0, attempt=1)
     with pytest.raises(ValidationError, match="vector"):
         RetrievalAttempt.model_validate(
             {
