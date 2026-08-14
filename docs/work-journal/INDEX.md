@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-15](2026-08-15.md) | `docs(code-practice): 定义有界代码实践交付计划` | #docs |
 | [2026-08-15](2026-08-15.md) | `feat(graphrag): 完成知识前置图交付` | #feat #docs |
 | [2026-08-15](2026-08-15.md) | `feat(graphrag): 接入教学流程与 web` | #feat #ui |
 | [2026-08-15](2026-08-15.md) | `feat(graphrag): 融合图与 hybrid 检索` | #feat |

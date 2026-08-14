@@ -8,6 +8,7 @@
 
 | 文档 | 版本 | 状态 | 更新日期 |
 |------|------|------|----------|
+| [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice-design.md) | 1.0 | active | 2026-08-15 |
 | [GraphRAG 与知识前置图](./graphrag-prerequisite-graph-design.md) | 1.0 | completed | 2026-08-15 |
 | [自校正 Hybrid RAG](./self-corrective-hybrid-rag-design.md) | 1.0 | completed | 2026-08-14 |
 | [多模态学习资料摄取](./multimodal-material-ingestion-design.md) | 1.0 | completed | 2026-08-14 |

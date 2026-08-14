@@ -1,0 +1,37 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: tool-calling-react-code-practice
+  branch: codex/tool-calling-react-code-practice
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - Tool Calling 与代码实践
+      - ReAct code practice
+      - 安全代码执行
+    keywords:
+      - 工具 Schema
+      - 动态工具选择
+      - 调用上限
+      - 运行代码测试
+      - 分级提示
+      - policy violation
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/tool-calling-react-code-practice-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/code_practice.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/state.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+        apiNames:
+          - generate_code_exercise
+          - run_code_tests

@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice/) | [implementation](./tool-calling-react-code-practice/implementation.md) / [checklist](./tool-calling-react-code-practice/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./tool-calling-react-code-practice/unit-test-plan.md) / [checklist](./tool-calling-react-code-practice/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
