@@ -1,7 +1,7 @@
 # 自校正 Hybrid RAG 单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-14
 
 **关联计划**: [unit-test-plan.md](./unit-test-plan.md)
@@ -32,6 +32,6 @@
 
 ## Phase 5: 完整回归与文章验证
 
-- [ ] 5.1 完整测试、编译、依赖、前端和差异检查
-- [ ] 5.2 Checklist、Header/INDEX 和复盘验证
-- [ ] 5.3 第 06 篇文章渲染与逐页视觉检查
+- [x] 5.1 完整测试、编译、依赖、前端和差异检查
+- [x] 5.2 Checklist、Header/INDEX 和复盘验证
+- [x] 5.3 第 06 篇文章渲染与逐页视觉检查

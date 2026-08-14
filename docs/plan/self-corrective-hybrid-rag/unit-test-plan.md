@@ -1,7 +1,7 @@
 # 自校正 Hybrid RAG 单元测试计划
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-14
 
 **关联 Checklist**: [unit-test-plan-checklist.md](./unit-test-plan-checklist.md)

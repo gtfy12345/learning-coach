@@ -9,13 +9,12 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
-| [自校正 Hybrid RAG](./self-corrective-hybrid-rag/) | [implementation](./self-corrective-hybrid-rag/implementation.md) / [checklist](./self-corrective-hybrid-rag/implementation-checklist.md) | 1.0 | 2026-08-14 |
-| ↳ 单元测试 | [test-plan](./self-corrective-hybrid-rag/unit-test-plan.md) / [checklist](./self-corrective-hybrid-rag/unit-test-plan-checklist.md) | 1.0 | 2026-08-14 |
-
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [自校正 Hybrid RAG](./self-corrective-hybrid-rag/) | [implementation](./self-corrective-hybrid-rag/implementation.md) / [checklist](./self-corrective-hybrid-rag/implementation-checklist.md) | 1.0 | 2026-08-14 |
+| ↳ 单元测试 | [test-plan](./self-corrective-hybrid-rag/unit-test-plan.md) / [checklist](./self-corrective-hybrid-rag/unit-test-plan-checklist.md) | 1.0 | 2026-08-14 |
 | [多模态学习资料摄取](./multimodal-material-ingestion/) | [implementation](./multimodal-material-ingestion/implementation.md) / [checklist](./multimodal-material-ingestion/implementation-checklist.md) | 1.0 | 2026-08-14 |
 | ↳ 单元测试 | [test-plan](./multimodal-material-ingestion/unit-test-plan.md) / [checklist](./multimodal-material-ingestion/unit-test-plan-checklist.md) | 1.0 | 2026-08-14 |
 | [Context Engineering 与 Middleware](./context-engineering-middleware/) | [implementation](./context-engineering-middleware/implementation.md) / [checklist](./context-engineering-middleware/implementation-checklist.md) | 1.0 | 2026-08-13 |
