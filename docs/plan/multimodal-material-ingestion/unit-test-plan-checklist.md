@@ -1,7 +1,7 @@
 # 多模态学习资料摄取单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-14
 
 **关联计划**: [unit-test-plan.md](./unit-test-plan.md)
@@ -26,6 +26,6 @@
 
 ## Phase 4: 回归与交付验证
 
-- [ ] 4.1 依赖、README、计划上下文和 INDEX 检查
-- [ ] 4.2 pytest、compileall、前端语法和差异检查
-- [ ] 4.3 第 05 篇文章渲染与逐页视觉检查
+- [x] 4.1 依赖、README、计划上下文和 INDEX 检查
+- [x] 4.2 pytest、compileall、前端语法和差异检查
+- [x] 4.3 第 05 篇文章渲染与逐页视觉检查

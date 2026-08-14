@@ -47,6 +47,14 @@ def test_material_input_requires_exactly_one_payload_and_sanitizes_name() -> Non
     )
     assert remote.source_uri == "https://example.com/course/intro"
 
+    windows_local = MaterialInput(
+        source_name=r"C:\private\course\lesson.py",
+        mime_type="text/x-python",
+        data=b"print('safe')",
+    )
+    assert windows_local.source_name == "lesson.py"
+    assert windows_local.source_uri == "lesson.py"
+
     with pytest.raises(ValueError, match="必须且只能提供"):
         MaterialInput(source_name="empty.txt", mime_type="text/plain")
     with pytest.raises(ValueError, match="必须且只能提供"):
@@ -105,6 +113,19 @@ def test_material_metadata_rejects_server_absolute_path() -> None:
             source_type="code",
             source_name="secret.py",
             source_uri=str(Path("/private/tmp/secret.py")),
+            mime_type="text/x-python",
+            content_hash="b" * 64,
+            location_type="lines",
+            location="lines 1-1",
+        )
+
+    with pytest.raises(ValueError, match="http 或 https"):
+        MaterialMetadata(
+            source_id="a" * 64,
+            source_key="upload:secret.py",
+            source_type="code",
+            source_name="secret.py",
+            source_uri="file:///private/tmp/secret.py",
             mime_type="text/x-python",
             content_hash="b" * 64,
             location_type="lines",
@@ -232,6 +253,7 @@ def test_incremental_index_add_skip_update_and_remove_sources() -> None:
     assert added.sources_received == 1
     assert added.sources_added == 1
     assert added.chunks_added == len(index.chunks)
+    assert len(added.sources[0].content_hash) == 12
     assert unchanged.sources_skipped == 1
     assert unchanged.chunks_added == 0
     assert unchanged.chunks_deleted == 0
@@ -277,3 +299,36 @@ def test_incremental_index_deduplicates_chunk_hashes_and_validates_cleanup() -> 
     assert len(index.chunks) == 1
     with pytest.raises(ValueError, match="cleanup"):
         index.sync(document, cleanup="unknown")  # type: ignore[arg-type]
+
+
+def test_public_docs_describe_multimodal_ingestion_and_dependencies() -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+
+    for term in (
+        "多模态学习资料摄取",
+        "PDF",
+        "DOCX",
+        "PPTX",
+        "EPUB",
+        "source_urls",
+        "--material",
+        "LocationAwareSplitter",
+        "content_hash",
+        "chunk_hash",
+        "增量索引",
+        "SSRF",
+        "不写入磁盘",
+    ):
+        assert term in readme
+    for package in (
+        "pypdf",
+        "python-docx",
+        "python-pptx",
+        "EbookLib",
+        "beautifulsoup4",
+        "Pillow",
+        "langchain-text-splitters",
+    ):
+        assert package in requirements

@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-14](2026-08-14.md) | `feat(ingestion): 完成多模态资料摄取交付` | #feat |
 | [2026-08-14](2026-08-14.md) | `feat(ingestion): 接入 cli 与 web 摄取` | #feat |
 | [2026-08-14](2026-08-14.md) | `feat(ingestion): splitter 与增量索引` | #feat |
 | [2026-08-14](2026-08-14.md) | `feat(ingestion): loader 与统一 document 契约` | #feat |

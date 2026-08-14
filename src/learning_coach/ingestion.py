@@ -44,7 +44,7 @@ class MaterialInput:
     source_url: str | None = None
 
     def __post_init__(self) -> None:
-        normalized_name = Path(self.source_name.strip()).name
+        normalized_name = Path(self.source_name.strip().replace("\\", "/")).name
         normalized_type = self.mime_type.strip().lower()
         normalized_url = (self.source_url or "").strip() or None
         has_data = self.data is not None
@@ -102,8 +102,12 @@ class MaterialMetadata(BaseModel):
     @classmethod
     def reject_absolute_local_paths(cls, value: str) -> str:
         parsed = urlparse(value)
+        if parsed.scheme and parsed.scheme.casefold() not in {"http", "https"}:
+            raise ValueError("source_uri URL 只允许 http 或 https。")
         if not parsed.scheme and Path(value).is_absolute():
             raise ValueError("source_uri 不能包含服务器绝对路径。")
+        if not parsed.scheme and ("/" in value or "\\" in value):
+            raise ValueError("source_uri 不能包含服务器本地路径。")
         return value
 
     @model_validator(mode="after")
@@ -127,7 +131,7 @@ class IngestedSource(BaseModel):
     source_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_name: str = Field(min_length=1, max_length=512)
     source_type: MaterialSourceType
-    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_hash: str = Field(pattern=r"^[0-9a-f]{12}$")
     chunks: int = Field(ge=0)
     status: Literal["added", "updated", "skipped", "deleted"]
 
@@ -366,7 +370,7 @@ def _source_summary(
         source_id=metadata.source_id,
         source_name=metadata.source_name,
         source_type=metadata.source_type,
-        content_hash=metadata.content_hash,
+        content_hash=metadata.content_hash[:12],
         chunks=chunks,
         status=status,
     )

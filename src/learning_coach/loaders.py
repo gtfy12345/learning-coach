@@ -294,43 +294,52 @@ class SafeWebFetcher:
         for redirect_count in range(MAX_WEB_REDIRECTS + 1):
             _validate_public_url(current, self._resolver)
             try:
-                response = client.get(current)
+                with client.stream(
+                    "GET", current, follow_redirects=False
+                ) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        if redirect_count >= MAX_WEB_REDIRECTS:
+                            raise MaterialLoadError("网页重定向次数过多。")
+                        location = response.headers.get("location", "").strip()
+                        if not location:
+                            raise MaterialLoadError("网页重定向缺少目标地址。")
+                        current = urljoin(current, location)
+                        continue
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        raise MaterialLoadError(
+                            f"网页资料返回 HTTP {response.status_code}。"
+                        ) from exc
+                    declared_length = response.headers.get("content-length")
+                    if declared_length and declared_length.isdigit():
+                        if int(declared_length) > MAX_WEB_RESPONSE_BYTES:
+                            raise MaterialLoadError("网页响应超过允许大小。")
+                    content_type = (
+                        response.headers.get("content-type", "")
+                        .split(";", 1)[0]
+                        .strip()
+                        .casefold()
+                    )
+                    if content_type not in {
+                        "application/xhtml+xml",
+                        "text/html",
+                        "text/markdown",
+                        "text/plain",
+                    }:
+                        raise MaterialLoadError("网页响应不是支持的文本类型。")
+                    payload = bytearray()
+                    for chunk in response.iter_bytes():
+                        payload.extend(chunk)
+                        if len(payload) > MAX_WEB_RESPONSE_BYTES:
+                            raise MaterialLoadError("网页响应超过允许大小。")
+                    return FetchedWebPage(
+                        final_url=str(response.url),
+                        content_type=content_type,
+                        content=bytes(payload),
+                    )
             except httpx.HTTPError as exc:
                 raise MaterialLoadError("网页资料下载失败。") from exc
-            if response.status_code in {301, 302, 303, 307, 308}:
-                if redirect_count >= MAX_WEB_REDIRECTS:
-                    raise MaterialLoadError("网页重定向次数过多。")
-                location = response.headers.get("location", "").strip()
-                if not location:
-                    raise MaterialLoadError("网页重定向缺少目标地址。")
-                current = urljoin(current, location)
-                continue
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                raise MaterialLoadError(
-                    f"网页资料返回 HTTP {response.status_code}。"
-                ) from exc
-            declared_length = response.headers.get("content-length")
-            if declared_length and declared_length.isdigit():
-                if int(declared_length) > MAX_WEB_RESPONSE_BYTES:
-                    raise MaterialLoadError("网页响应超过允许大小。")
-            content = response.content
-            if len(content) > MAX_WEB_RESPONSE_BYTES:
-                raise MaterialLoadError("网页响应超过允许大小。")
-            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
-            if content_type not in {
-                "application/xhtml+xml",
-                "text/html",
-                "text/markdown",
-                "text/plain",
-            }:
-                raise MaterialLoadError("网页响应不是支持的文本类型。")
-            return FetchedWebPage(
-                final_url=str(response.url),
-                content_type=content_type,
-                content=content,
-            )
         raise MaterialLoadError("网页重定向次数过多。")
 
 

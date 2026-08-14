@@ -282,6 +282,41 @@ def test_web_fetcher_revalidates_redirect_and_bounds_response() -> None:
     oversized_client.close()
 
 
+def test_web_fetcher_stops_streaming_after_response_limit() -> None:
+    class CountingStream(httpx.SyncByteStream):
+        def __init__(self) -> None:
+            self.chunks_read = 0
+
+        def __iter__(self):
+            for _ in range(4):
+                self.chunks_read += 1
+                yield b"x" * (MAX_WEB_RESPONSE_BYTES // 2)
+
+    stream = CountingStream()
+
+    def oversized_stream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            stream=stream,
+            request=request,
+        )
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(oversized_stream), follow_redirects=True
+    )
+    fetcher = SafeWebFetcher(
+        client=client,
+        resolver=lambda host: ["93.184.216.34"],
+    )
+
+    with pytest.raises(ValueError, match="网页响应"):
+        fetcher.fetch("https://example.com/stream")
+
+    assert stream.chunks_read == 3
+    client.close()
+
+
 class _VisionModel:
     def __init__(self) -> None:
         self.calls: list[object] = []

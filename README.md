@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层与 Context Engineering 扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering 与多模态学习资料摄取扩展：
 
 ```mermaid
 flowchart LR
@@ -40,6 +40,10 @@ flowchart LR
 - 根据掌握度、最近错误和资料动态生成 Prompt、选择工具与可选高级模型
 - `dynamic_prompt`、`wrap_model_call`、`ModelCallLimitMiddleware` 与 `ToolCallLimitMiddleware`
 - 不额外调用模型的确定性摘要，以及可展示、无敏感正文的 Context Report
+- 面向 PDF、DOCX、PPTX、EPUB、HTML、文本、网页、图片和代码的统一 Loader Registry
+- 保留页码、幻灯片、章节、标题与代码行号的 `LocationAwareSplitter`
+- 来源 `source_id`、原文 `content_hash` 与 `chunk_hash` 三层 SHA-256
+- 支持新增、更新、未变化跳过和 full cleanup 的会话级内存增量索引
 - LangGraph State、Node、Edge 和 Conditional Edge
 - 可终止的补救循环
 - `interrupt()` 人工输入
@@ -93,6 +97,16 @@ PYTHONPATH=src python -m learning_coach "LangGraph Reducer" \
   --goal "能够独立设计有终止条件的 Reducer 合并流程"
 ```
 
+也可以重复传入本地学习资料或课程网页。`--image` 仍表示“参与诊断的题图”，`--material` 表示“进入检索索引的学习资料”：
+
+```bash
+PYTHONPATH=src python -m learning_coach "LangGraph 条件边" \
+  --material ./paper.pdf \
+  --material ./course-slides.pptx \
+  --material ./src/example.py \
+  --material https://docs.example.com/langgraph-routing
+```
+
 不传主题也可以启动，程序会在命令行中询问：
 
 ```bash
@@ -118,7 +132,9 @@ PYTHONPATH=src python -m learning_coach web
 - 输入学习主题并生成结构化诊断题
 - 输入可选学习目标，让讲解根据掌握度和最近错误动态调整
 - 上传一张本地图片参与诊断
-- 粘贴一段可选学习资料，在讲解阶段检索相关片段并显示来源
+- 粘贴纯文本，或上传多份论文、书籍、课件、图片与代码资料
+- 输入一个或多个课程网页 URL，并在讲解阶段显示文件名、页码、章节、幻灯片或代码行范围
+- 显示本次摄取的新增、更新、跳过和 Chunk 统计
 - 提交诊断回答，查看针对性讲解和迁移练习
 - 提交练习答案，查看结构化评分、反馈和知识缺口
 - 未达到 80 分时自动补讲并继续出题，最多评价两次
@@ -135,9 +151,9 @@ PYTHONPATH=src python -m learning_coach web
 | --- | --- |
 | `GET /api/health` | 服务健康检查 |
 | `GET /api/config` | 返回脱敏后的主/高级/备用模型配置、图片能力和预算上限 |
-| `POST /api/sessions` | 使用主题、可选学习目标、图片和纯文本资料创建学习会话 |
+| `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
-| `POST /api/sessions/stream` | 使用主题、可选学习目标、图片和纯文本资料流式创建会话 |
+| `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
 | `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、state 和 done 事件 |
 
 两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
@@ -189,7 +205,44 @@ CONTEXT_MODEL_CALL_LIMIT=3
 CONTEXT_TOOL_CALL_LIMIT=2
 ```
 
-动态工具只读取当前会话内存中的学习资料和进展，不访问文件、网络、数据库或环境变量。官方 CLI 适配器当前明确不支持 Tool Calling，因此使用相同目标、掌握度、最近错误和摘要的 LCEL 兼容路径；这条路径不会伪造工具调用，Context Report 会标记为 `lcel`。
+动态工具只读取已经摄取到当前会话内存中的 Chunk 和学习进展，不会在 Agent 循环中自行访问文件、网络、数据库或环境变量。显式提供的网页 URL 只在会话创建前由有界 Loader 下载。官方 CLI 适配器当前明确不支持 Tool Calling，因此使用相同目标、掌握度、最近错误和摘要的 LCEL 兼容路径；这条路径不会伪造工具调用，Context Report 会标记为 `lcel`。
+
+### 多模态学习资料摄取
+
+第 5 阶段把“资料”从一个纯文本字符串升级为一条明确的数据管线：
+
+```mermaid
+flowchart LR
+    I[文件、网页、图片或代码] --> L[Loader Registry]
+    L --> D[LangChain Document]
+    D --> S[LocationAwareSplitter]
+    S --> H[Metadata + SHA-256]
+    H --> X[会话级增量索引]
+    X --> R[确定性词法检索]
+    R --> T[LCEL 或教学 Agent]
+```
+
+Loader 统一输出 `Document(page_content, metadata)`，不同格式负责提供不同的原始位置：
+
+| 资料类型 | 支持格式 | 保留的位置 |
+| --- | --- | --- |
+| 论文与书籍 | PDF、EPUB | PDF 页码、EPUB 章节 |
+| 课程文档 | DOCX、PPTX、HTML、TXT、Markdown | 段落、标题、幻灯片或文档位置 |
+| 网页 | 明确提交的 http/https URL | 最终 URL 与页面标题 |
+| 图片 | PNG、JPEG、GIF、WebP | 文件名、尺寸及视觉模型生成的可见文字/图表描述 |
+| 代码 | Python、JS/TS、Java、Go、Rust、C/C++、Shell、SQL、YAML 等 | 文件名、语言与起止行 |
+
+`LocationAwareSplitter` 默认按 1,000 字符和 150 字符重叠切分，并在通用文本中优先保留段落与中英文句子边界，在代码中优先保留行边界。每个 Chunk 都包含原始位置、`char_start`、`char_end` 和稳定 `chunk_index`。
+
+增量索引使用三类哈希：
+
+- `source_id = sha256(source_key)`：识别同一逻辑文件或 URL。
+- `content_hash = sha256(raw input)`：判断来源内容是否变化。
+- `chunk_hash = sha256(source_id + location + normalized text)`：去重并识别 Chunk。
+
+同一来源和 `content_hash` 再次摄取时标记为 skipped；同名来源内容变化时只替换该来源；`full` 同步可以删除本轮缺失来源。当前索引只保存在会话内存中，不写入磁盘、SQLite 或外部向量数据库。
+
+安全边界：单份资料最大 10 MiB，默认最多 10 个资料、其中最多 3 张图片，总上传最大 30 MiB；网页响应最大 2 MiB。网页 Loader 只允许 http/https，并对初始 URL、DNS 结果和每次重定向执行 SSRF 检查，拒绝 loopback、私网、链路本地和保留地址。代码只读取，不执行。图片每张最多调用视觉模型一次；主模型没有声明图片能力时明确失败。
 
 也可以把模型切换到 Google Gemini：
 
@@ -290,7 +343,7 @@ questions = tasks.quiz.batch(
 
 五类任务都实现 Runnable 统一接口，可以使用 `invoke`、`ainvoke`、`batch` 和 `stream`。不支持原生分块的官方 CLI 模型会退化为一个完整文本块；支持流式的 LangChain Chat Model 可以逐块产生内容。
 
-教学 Runnable 不是孤立示例。用户粘贴资料后，它会在内存中完成以下组合：
+教学 Runnable 不是孤立示例。用户提供纯文本或多模态资料后，它会在内存中完成以下组合：
 
 ```mermaid
 flowchart LR
@@ -304,7 +357,7 @@ flowchart LR
     O --> G[讲解文本与来源]
 ```
 
-词法 Retriever 不需要 Embedding、向量数据库或网络：它对最多 50,000 字的纯文本做稳定切块，同时考虑英文词元与中文连续字符片段，最多返回三个正相关片段。它适合本篇验证 RAG 数据流，但不是语义向量检索的替代品。
+词法 Retriever 不需要 Embedding 或向量数据库：它优先检索多模态摄取管线生成的结构化 Chunk，同时兼容原来最多 50,000 字的粘贴文本；评分考虑英文词元与中文连续字符片段，最多返回三个正相关片段。它不是语义向量检索或下一阶段 Hybrid RAG 的替代品。
 
 可以导出任一任务的 Mermaid 组合图：
 
@@ -368,6 +421,8 @@ learning-coach/
 │       ├── cli_models.py
 │       ├── context.py
 │       ├── graph.py
+│       ├── ingestion.py
+│       ├── loaders.py
 │       ├── media.py
 │       ├── middleware.py
 │       ├── model.py
@@ -387,6 +442,8 @@ learning-coach/
     ├── test_cli_models.py
     ├── test_context.py
     ├── test_graph.py
+    ├── test_ingestion.py
+    ├── test_loaders.py
     ├── test_media.py
     ├── test_middleware.py
     ├── test_model.py
@@ -397,18 +454,20 @@ learning-coach/
 
 - `state.py`：学习过程、掌握度、最近错误、摘要和结构化诊断信息保存哪些数据。
 - `context.py`：定义 Runtime Context、预算校验、掌握度分层、最近错误和确定性摘要。
+- `ingestion.py`：定义资料输入、Metadata、位置感知 Splitter、SHA-256 和会话级增量索引。
+- `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
-- `retrieval.py`：对用户粘贴的纯文本做确定性内存切块和词法检索。
+- `retrieval.py`：检索结构化资料 Chunk，并兼容原有粘贴纯文本切块。
 - `graph.py`：节点之间的固定边、条件边和循环。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
 - `auth.py`：把登录、状态和退出操作委托给官方 CLI。
 - `cli_models.py`：把 Codex、Claude Code 和 Gemini CLI 适配成现有节点可调用的模型对象。
 - `cli.py`：接收人工回答，并用 `Command` 恢复图执行。
-- `web.py`：提供本地 FastAPI 页面、学习会话 API、图片上传和 Graph 恢复协议。
+- `web.py`：提供本地 FastAPI 页面、多资料摄取 API、图片上传和 Graph 恢复协议。
 - `static/`：浏览器端学习界面、进度状态和交互逻辑。
 
 ## 系列路线
@@ -422,7 +481,7 @@ learning-coach/
 | 2.5 | Web MVP | FastAPI、本地学习页面、图片上传和浏览器会话恢复 |
 | 3 | Runnable 与 LCEL | 高级组合、统一执行接口、内存 RAG、SSE、超时取消和追踪 |
 | 4 | Context Engineering 与 Middleware | Runtime Context、动态 Prompt/Tools/Model、摘要和预算 |
-| 5 | 多模态学习资料摄取 | 读取文档、网页、图片与代码并保留来源 |
+| 5 | 多模态学习资料摄取 | Loader、Splitter、Metadata、Hash、增量索引及文件/网页/图片/代码来源位置 |
 | 6 | 自校正 Hybrid RAG | 检索、重排、查询改写与证据质量判断 |
 | 7 | GraphRAG 与知识前置图 | 生成概念图谱并定位前置知识缺口 |
 | 8 | Tool Calling、ReAct 与代码实践 | 运行代码测试并提供分级提示 |
@@ -433,8 +492,10 @@ learning-coach/
 
 ## 当前边界
 
-- 图片目前只进入诊断节点；纯文本资料可以手动粘贴并在内存中切块、检索和显示来源，但还没有文件解析、OCR 或持久化索引。
-- 现在不会自动读取个人课程、论文或项目代码，也不会把粘贴资料保存到外部数据库。
+- 诊断图片和资料图片是两个显式输入：前者只进入诊断，后者由视觉模型生成可检索描述；扫描 PDF 不会自动逐页 OCR。
+- 只读取用户明确上传或通过 `--material`/`source_urls` 提交的资料，不会扫描目录、递归爬站或自动读取个人文件。
+- 增量索引只存在于当前会话内存，不写入磁盘，也不能跨服务重启复用；持久化语料库和向量索引尚未实现。
+- 网页 Loader 解析静态 HTML，不执行页面 JavaScript；复杂排版、公式和受密码保护文档可能无法完整提取。
 - `InMemorySaver` 只保存当前进程中的状态。
 - Web MVP 目前只面向本机使用，没有用户账号、数据库、跨进程恢复或公网部署。
 - 评分由模型完成，不能直接等同于真实掌握程度。
