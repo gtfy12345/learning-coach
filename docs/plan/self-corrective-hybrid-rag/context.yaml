@@ -1,0 +1,52 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: self-corrective-hybrid-rag
+  baseBranch: main
+  branch: codex/self-corrective-hybrid-rag
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - self-corrective-hybrid-rag
+      - 自校正 Hybrid RAG
+      - corrective rag
+    keywords:
+      - Embedding BM25 RRF rerank query rewrite evidence quality
+      - 关键词检索 向量召回 融合 重排 查询改写 质量判断
+      - insufficient evidence retry retrieval
+    relatedSpecs:
+      - ../../spec/self-corrective-hybrid-rag-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/self-corrective-hybrid-rag-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../../spec/multimodal-material-ingestion-design.md
+        - ../multimodal-material-ingestion/implementation.md
+      discovery:
+        packages:
+          - src/learning_coach/hybrid_rag.py
+          - src/learning_coach/retrieval.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/middleware.py
+          - src/learning_coach/schemas.py
+          - src/learning_coach/state.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests
+        apiNames:
+          - HybridStudyRetriever
+          - RagSettings
+          - RetrievalReport
+          - retrieve_study_sources
+        uiRoutes:
+          - /
+          - /api/sessions
+          - /api/sessions/stream
+        commands:
+          - python -m learning_coach --material

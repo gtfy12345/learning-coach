@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [自校正 Hybrid RAG](./self-corrective-hybrid-rag/) | [implementation](./self-corrective-hybrid-rag/implementation.md) / [checklist](./self-corrective-hybrid-rag/implementation-checklist.md) | 1.0 | 2026-08-14 |
+| ↳ 单元测试 | [test-plan](./self-corrective-hybrid-rag/unit-test-plan.md) / [checklist](./self-corrective-hybrid-rag/unit-test-plan-checklist.md) | 1.0 | 2026-08-14 |
 
 ## 2 已完成（Completed）
 
