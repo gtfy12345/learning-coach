@@ -1,19 +1,28 @@
 import pytest
 from pydantic import ValidationError
 
+from learning_coach.hybrid_rag import (
+    HybridRetrievalResult,
+    RagSettings,
+    RankedChunk,
+)
 from learning_coach.ingestion import StudyChunkRecord
 from learning_coach.knowledge_graph import (
     DeterministicGraphExtractor,
     ExtractedEntity,
     ExtractedRelation,
     GraphExtractionBatch,
+    GraphStudyRetriever,
     ModelAugmentedGraphExtractor,
     StructuredModelGraphExtractor,
     build_concept_graph,
+    create_graph_retriever,
     explain_prerequisites,
+    fuse_graph_rankings,
     select_seed_concepts,
     traverse_prerequisites,
     normalize_concept_name,
+    rank_graph_evidence,
     resolve_concepts,
 )
 from learning_coach.schemas import (
@@ -23,6 +32,10 @@ from learning_coach.schemas import (
     GraphRAGReport,
     GroundedTeaching,
     PrerequisiteExplanation,
+    RetrievalScore,
+    RetrievalAttempt,
+    RetrievalReport,
+    StudySource,
 )
 
 
@@ -505,4 +518,191 @@ def test_prerequisite_explanations_are_empty_without_evidenced_path() -> None:
     )
 
     assert explain_prerequisites(graph, [node.concept_id], gap_context={}) == []
+
+
+def test_graph_evidence_ranking_uses_distance_confidence_and_query() -> None:
+    chunks = [
+        _chunk("State 是 Reducer 的前置知识。", index=1),
+        _chunk("Reducer 是 条件路由 的前置知识。", index=2),
+        _chunk("无关页面布局说明。", index=3),
+    ]
+    graph = build_concept_graph(chunks)
+    target = next(node for node in graph.nodes if node.name == "条件路由")
+    paths = traverse_prerequisites(graph, [target.concept_id])
+
+    ranked = rank_graph_evidence(
+        "条件路由 State",
+        graph,
+        paths,
+        chunks,
+    )
+
+    assert [item.chunk.chunk_id for item in ranked] == [
+        chunks[1].chunk_id,
+        chunks[0].chunk_id,
+    ]
+    assert all(0 < item.score <= 1 for item in ranked)
+
+
+def test_graph_and_hybrid_rank_fusion_preserves_trace_and_adds_graph_source() -> None:
+    hybrid_chunk = _chunk("条件路由根据结构化 State 选择节点。", index=1)
+    graph_chunk = _chunk("Reducer 是 条件路由 的前置知识。", index=2)
+    hybrid_source = StudySource(
+        source_id=hybrid_chunk.chunk_id,
+        text=hybrid_chunk.text,
+        score=0.8,
+        source_name=hybrid_chunk.source_name,
+        source_uri=hybrid_chunk.source_uri,
+        source_type=hybrid_chunk.source_type,
+        location=hybrid_chunk.location,
+        chunk_hash=hybrid_chunk.chunk_hash,
+        retrieval_score=RetrievalScore(
+            keyword=0.8,
+            embedding=0.7,
+            fusion=1,
+            rerank=0.8,
+        ),
+        retrieval_attempt=1,
+    )
+
+    fused = fuse_graph_rankings(
+        [hybrid_source],
+        [RankedChunk(chunk=graph_chunk, score=0.9)],
+        top_k=3,
+    )
+
+    assert [source.source_id for source in fused] == [
+        hybrid_chunk.chunk_id,
+        graph_chunk.chunk_id,
+    ]
+    assert fused[0].retrieval_score is not None
+    assert fused[0].retrieval_score.keyword == 0.8
+    assert fused[0].retrieval_score.graph == 0
+    assert fused[1].retrieval_score is not None
+    assert fused[1].retrieval_score.graph == 0.9
+    assert all(
+        source.retrieval_score is not None
+        and source.retrieval_score.graph_fusion is not None
+        for source in fused
+    )
+
+
+def test_graph_rank_fusion_is_identity_when_graph_has_no_candidates() -> None:
+    source = StudySource(source_id="legacy", text="legacy", score=0.7)
+
+    assert fuse_graph_rankings([source], [], top_k=3) == [source]
+
+
+def _retrieval_report(*, quality: str = "sufficient") -> RetrievalReport:
+    return RetrievalReport(
+        original_query="条件路由",
+        final_query="条件路由",
+        rewritten=False,
+        quality=quality,
+        embedding_model_id="local:hash-v1",
+        attempts=[
+            RetrievalAttempt(
+                attempt=1,
+                query="条件路由",
+                keyword_candidates=1,
+                embedding_candidates=1,
+                selected_candidates=1,
+                quality=quality,
+                reason="测试报告",
+            )
+        ],
+    )
+
+
+class _StubHybridRetriever:
+    def __init__(self, sources: list[StudySource]) -> None:
+        self.sources = sources
+        self.settings = RagSettings()
+        self.calls = 0
+
+    def retrieve(
+        self,
+        query: str,
+        chunks: object,
+        *,
+        rewrite_context: object = None,
+    ) -> HybridRetrievalResult:
+        self.calls += 1
+        return HybridRetrievalResult(
+            sources=list(self.sources), report=_retrieval_report()
+        )
+
+
+def test_graph_study_retriever_augments_hybrid_sources_and_reports_paths() -> None:
+    relation_chunk = _chunk("Reducer 是 条件路由 的前置知识。", index=1)
+    hybrid_chunk = _chunk("条件路由根据 State 选择节点。", index=2)
+    hybrid_source = StudySource(
+        source_id=hybrid_chunk.chunk_id,
+        text=hybrid_chunk.text,
+        score=0.8,
+        source_name=hybrid_chunk.source_name,
+        source_uri=hybrid_chunk.source_uri,
+        source_type=hybrid_chunk.source_type,
+        location=hybrid_chunk.location,
+        chunk_hash=hybrid_chunk.chunk_hash,
+    )
+    hybrid = _StubHybridRetriever([hybrid_source])
+    retriever = GraphStudyRetriever(hybrid=hybrid)
+
+    result = retriever.retrieve(
+        "条件路由",
+        [relation_chunk, hybrid_chunk],
+        rewrite_context={"missing_point": "Reducer 不熟悉"},
+    )
+
+    assert hybrid.calls == 1
+    assert result.graph_report is not None
+    assert result.graph_report.graph_used is True
+    assert result.graph_report.prerequisites[0].prerequisite_name == "Reducer"
+    assert {source.source_id for source in result.sources} == {
+        relation_chunk.chunk_id,
+        hybrid_chunk.chunk_id,
+    }
+
+
+def test_graph_study_retriever_keeps_hybrid_identity_without_graph_relation() -> None:
+    chunk = _chunk("Reducer 合并并行状态。")
+    source = StudySource(source_id=chunk.chunk_id, text=chunk.text, score=0.8)
+    hybrid = _StubHybridRetriever([source])
+
+    result = GraphStudyRetriever(hybrid=hybrid).retrieve(
+        "Reducer", [chunk], rewrite_context={}
+    )
+
+    assert result.sources == [source]
+    assert result.graph_report is not None
+    assert result.graph_report.graph_used is False
+    assert result.graph_report.graph_candidates == 0
+
+
+class _ExplodingExtractor:
+    def extract(self, chunks: object) -> GraphExtractionBatch:
+        raise RuntimeError("private graph backend detail")
+
+
+def test_graph_study_retriever_hides_extraction_errors_and_degrades() -> None:
+    chunk = _chunk("Reducer 合并并行状态。")
+    source = StudySource(source_id=chunk.chunk_id, text=chunk.text, score=0.8)
+
+    result = GraphStudyRetriever(
+        hybrid=_StubHybridRetriever([source]),
+        extractor=_ExplodingExtractor(),
+    ).retrieve("Reducer", [chunk], rewrite_context={})
+
+    assert result.sources == [source]
+    assert result.graph_report is not None
+    assert result.graph_report.extraction_mode == "fallback"
+    assert "private" not in result.graph_report.model_dump_json()
+
+
+def test_graph_retriever_factory_wraps_explicit_hybrid_configuration() -> None:
+    retriever = create_graph_retriever({})
+
+    assert isinstance(retriever, GraphStudyRetriever)
+    assert retriever.settings.embedding_model_id == "local:hash-v1"
     build_concept_graph,

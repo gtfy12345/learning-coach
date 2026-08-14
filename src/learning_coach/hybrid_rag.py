@@ -10,6 +10,7 @@ from typing import Any
 from langchain_core.embeddings import Embeddings
 
 from learning_coach.schemas import (
+    GraphRAGReport,
     RetrievalAttempt,
     RetrievalQuality,
     RetrievalReport,
@@ -115,6 +116,7 @@ class HybridRetrievalResult:
 
     sources: list[StudySource]
     report: RetrievalReport
+    graph_report: GraphRAGReport | None = None
 
 
 @dataclass(frozen=True)

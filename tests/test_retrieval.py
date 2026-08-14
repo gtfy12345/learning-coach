@@ -154,3 +154,27 @@ def test_retrieval_report_traces_hybrid_scores_and_bounded_attempts() -> None:
     assert result.report.original_query == "怎么合并并行状态"
     assert 1 <= len(result.report.attempts) <= 2
     assert result.report.quality in {"sufficient", "insufficient"}
+
+
+def test_default_retrieval_adds_graph_report_and_remaps_legacy_chunk_ids() -> None:
+    result = retrieve_study_sources_with_report(
+        {
+            "query": "条件路由",
+            "study_material": "Reducer 是 条件路由 的前置知识。",
+            "missing_point": "Reducer",
+        }
+    )
+
+    assert result.graph_report is not None
+    assert result.graph_report.graph_used is True
+    assert result.graph_report.prerequisites
+    assert all(
+        chunk_id.startswith("material-1#chunk-")
+        for node in result.graph_report.nodes
+        for chunk_id in node.chunk_ids
+    )
+    assert all(
+        chunk_id.startswith("material-1#chunk-")
+        for item in result.graph_report.prerequisites
+        for chunk_id in item.evidence_chunk_ids
+    )

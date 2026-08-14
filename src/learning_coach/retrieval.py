@@ -11,7 +11,8 @@ from learning_coach.hybrid_rag import (
     RagSettings,
 )
 from learning_coach.ingestion import StudyChunkRecord
-from learning_coach.schemas import RetrievalScore, StudySource
+from learning_coach.knowledge_graph import GraphStudyRetriever
+from learning_coach.schemas import GraphRAGReport, RetrievalScore, StudySource
 
 MAX_STUDY_MATERIAL_CHARS = 50_000
 DEFAULT_CHUNK_SIZE = 800
@@ -144,7 +145,7 @@ def retrieve_study_sources(
 def retrieve_study_sources_with_report(
     values: Mapping[str, Any],
     *,
-    retriever: HybridStudyRetriever | None = None,
+    retriever: HybridStudyRetriever | GraphStudyRetriever | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_CHUNK_OVERLAP,
     top_k: int = DEFAULT_TOP_K,
@@ -184,8 +185,8 @@ def retrieve_study_sources_with_report(
                 overlap=overlap,
             )
 
-    engine = retriever or HybridStudyRetriever(
-        settings=RagSettings(top_k=top_k)
+    engine = retriever or GraphStudyRetriever(
+        hybrid=HybridStudyRetriever(settings=RagSettings(top_k=top_k))
     )
     result = engine.retrieve(
         query,
@@ -211,6 +212,47 @@ def retrieve_study_sources_with_report(
             for source in result.sources
         ],
         report=result.report,
+        graph_report=_remap_graph_report(result.graph_report, legacy_ids),
+    )
+
+
+def _remap_graph_report(
+    report: GraphRAGReport | None,
+    legacy_ids: Mapping[str, str],
+) -> GraphRAGReport | None:
+    if report is None:
+        return None
+
+    def remap(values: list[str]) -> list[str]:
+        return [legacy_ids.get(value, value) for value in values]
+
+    return report.model_copy(
+        update={
+            "nodes": [
+                node.model_copy(update={"chunk_ids": remap(node.chunk_ids)})
+                for node in report.nodes
+            ],
+            "relations": [
+                relation.model_copy(
+                    update={
+                        "evidence_chunk_ids": remap(
+                            relation.evidence_chunk_ids
+                        )
+                    }
+                )
+                for relation in report.relations
+            ],
+            "prerequisites": [
+                explanation.model_copy(
+                    update={
+                        "evidence_chunk_ids": remap(
+                            explanation.evidence_chunk_ids
+                        )
+                    }
+                )
+                for explanation in report.prerequisites
+            ],
+        }
     )
 
 

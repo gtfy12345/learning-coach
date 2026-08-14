@@ -20,9 +20,9 @@
 
 ## Phase 3: 图与 Hybrid RAG 融合
 
-- [ ] 3.1 实现图证据排名和图/Hybrid RRF
-- [ ] 3.2 实现 GraphStudyRetriever 与安全降级
-- [ ] 3.3 接入兼容检索适配器和公共工厂
+- [x] 3.1 实现图证据排名和图/Hybrid RRF
+- [x] 3.2 实现 GraphStudyRetriever 与安全降级
+- [x] 3.3 接入兼容检索适配器和公共工厂
 
 ## Phase 4: LCEL、Middleware、State 与 Web 集成
 
