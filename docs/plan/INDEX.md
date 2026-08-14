@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [多模态学习资料摄取](./multimodal-material-ingestion/) | [implementation](./multimodal-material-ingestion/implementation.md) / [checklist](./multimodal-material-ingestion/implementation-checklist.md) | 1.0 | 2026-08-14 |
+| ↳ 单元测试 | [test-plan](./multimodal-material-ingestion/unit-test-plan.md) / [checklist](./multimodal-material-ingestion/unit-test-plan-checklist.md) | 1.0 | 2026-08-14 |
 
 ## 2 已完成（Completed）
 

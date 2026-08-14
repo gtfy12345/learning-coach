@@ -1,0 +1,52 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: multimodal-material-ingestion
+  baseBranch: main
+  branch: codex/multimodal-material-ingestion
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - multimodal-material-ingestion
+      - 多模态学习资料摄取
+      - document ingestion
+    keywords:
+      - Loader Splitter Metadata Hash incremental index
+      - PDF DOCX PPTX EPUB webpage image code
+      - source page slide chapter line location
+    relatedSpecs:
+      - ../../spec/multimodal-material-ingestion-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/multimodal-material-ingestion-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../../spec/lcel-production-chain-design.md
+        - ../context-engineering-middleware/implementation.md
+      discovery:
+        packages:
+          - src/learning_coach/ingestion.py
+          - src/learning_coach/loaders.py
+          - src/learning_coach/retrieval.py
+          - src/learning_coach/schemas.py
+          - src/learning_coach/state.py
+          - src/learning_coach/cli.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests
+        apiNames:
+          - MaterialInput
+          - MaterialLoaderRegistry
+          - InMemoryStudyIndex
+          - IngestionReport
+          - StudySource
+        uiRoutes:
+          - /
+          - /api/sessions
+          - /api/sessions/stream
+        commands:
+          - python -m learning_coach --material
