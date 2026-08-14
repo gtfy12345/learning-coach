@@ -21,6 +21,137 @@ class Assessment(BaseModel):
     missing_point: str = Field(description="最主要的知识缺口；没有时写明已经掌握")
 
 
+CodeDifficulty = Literal["foundation", "application", "advanced"]
+CodeErrorType = Literal[
+    "none",
+    "syntax_error",
+    "policy_violation",
+    "timeout",
+    "resource_limit",
+    "runtime_error",
+    "test_failure",
+    "tool_error",
+]
+
+
+class CodeTestCase(BaseModel):
+    """One bounded JSON-compatible test owned by a generated exercise."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_-]+$")
+    args: list[object] = Field(default_factory=list, max_length=8)
+    expected: object
+    visible: bool = False
+
+
+class CodeExercise(BaseModel):
+    """A deterministic single-function Python exercise and its tests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exercise_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=128)
+    instructions: str = Field(min_length=1, max_length=1_000)
+    entrypoint: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+    starter_code: str = Field(min_length=1, max_length=12_000)
+    difficulty: CodeDifficulty
+    tests: list[CodeTestCase] = Field(min_length=1, max_length=12)
+
+
+class GenerateCodeExerciseInput(BaseModel):
+    """Validated arguments for the exercise-generation tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=300)
+    explanation: str = Field(default="", max_length=4_000)
+    difficulty: CodeDifficulty = "application"
+
+
+class RunCodeTestsInput(BaseModel):
+    """Validated arguments for the restricted code-test tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exercise: CodeExercise
+    code: str = Field(min_length=1, max_length=20_000)
+
+
+class CodeTestOutcome(BaseModel):
+    """Safe result projection for one code test."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_id: str = Field(min_length=1, max_length=64)
+    status: Literal["passed", "failed", "error"]
+    visible: bool = False
+    summary: str = Field(default="", max_length=512)
+    duration_ms: int = Field(default=0, ge=0, le=10_000)
+
+
+class CodeHint(BaseModel):
+    """One progressively more specific hint for a classified code error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: Literal[1, 2, 3]
+    error_type: CodeErrorType
+    text: str = Field(min_length=1, max_length=600)
+
+
+class ToolTraceEntry(BaseModel):
+    """A safe Action/Observation entry from the bounded ReAct controller."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step: int = Field(ge=1, le=3)
+    tool_name: str = Field(min_length=1, max_length=80)
+    status: Literal["completed", "rejected", "error"]
+    observation: str = Field(min_length=1, max_length=300)
+
+
+class CodePracticeReport(BaseModel):
+    """Deterministic execution, grading and hint report."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["passed", "failed", "rejected", "error"]
+    error_type: CodeErrorType
+    passed_tests: int = Field(ge=0, le=12)
+    total_tests: int = Field(ge=0, le=12)
+    score: int = Field(ge=0, le=100)
+    outcomes: list[CodeTestOutcome] = Field(default_factory=list, max_length=12)
+    hints: list[CodeHint] = Field(default_factory=list, max_length=3)
+    safety_notice: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_test_counts(self) -> "CodePracticeReport":
+        if self.passed_tests > self.total_tests:
+            raise ValueError("通过测试数不能超过总测试数。")
+        return self
+
+
+class CodePracticeRun(BaseModel):
+    """One bounded ReAct result for generation or evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exercise: CodeExercise | None = None
+    report: CodePracticeReport | None = None
+    trace: list[ToolTraceEntry] = Field(default_factory=list, max_length=3)
+    tool_calls: int = Field(ge=0, le=3)
+    tool_call_limit: int = Field(ge=0, le=3)
+    termination_reason: Literal[
+        "completed",
+        "not_applicable",
+        "budget_exhausted",
+        "duplicate_action",
+        "tool_unavailable",
+        "tool_error",
+    ]
+
+
 RetrievalQuality = Literal["sufficient", "insufficient", "empty"]
 
 

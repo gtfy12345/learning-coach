@@ -8,9 +8,9 @@
 
 ## Phase 1: 工具 Schema、练习契约与动态注册表
 
-- [ ] 1.1 定义代码练习、测试结果、错误、提示和工具轨迹 Schema
-- [ ] 1.2 实现确定性 Python 练习生成器
-- [ ] 1.3 实现 LangChain Tool 与阶段感知注册表
+- [x] 1.1 定义代码练习、测试结果、错误、提示和工具轨迹 Schema
+- [x] 1.2 实现确定性 Python 练习生成器
+- [x] 1.3 实现 LangChain Tool 与阶段感知注册表
 
 ## Phase 2: 受限执行器与有界 ReAct
 
