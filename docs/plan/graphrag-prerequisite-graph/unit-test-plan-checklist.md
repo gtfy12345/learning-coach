@@ -26,9 +26,9 @@
 
 ## Phase 4: 教学与 Web 集成测试
 
-- [ ] 4.1 LCEL、Middleware、Agent、Fallback 与流式测试
-- [ ] 4.2 State、SSE、暂停恢复、API 和安全投影测试
-- [ ] 4.3 Web 概念图、前置解释、无图隐藏和转义测试
+- [x] 4.1 LCEL、Middleware、Agent、Fallback 与流式测试
+- [x] 4.2 State、SSE、暂停恢复、API 和安全投影测试
+- [x] 4.3 Web 概念图、前置解释、无图隐藏和转义测试
 
 ## Phase 5: 文档、回归与文章验证
 

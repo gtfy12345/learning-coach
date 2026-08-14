@@ -252,6 +252,36 @@ def test_context_engineered_agent_executes_tools_and_reports_budgets() -> None:
     )
 
 
+def test_context_engineered_agent_preserves_graph_report_from_search_tool() -> None:
+    model = ToolCallingTeachingModel()
+    engine = ContextEngineeredTeaching(
+        primary_model=model,
+        fallback_runnable=RunnableLambda(
+            lambda values: GroundedTeaching(text="LCEL fallback")
+        ),
+    )
+    task = {
+        "topic": "条件边",
+        "diagnostic_focus": "条件边 State 路由",
+        "missing_point": "State",
+        "mastery_level": 55,
+        "study_material": "State 是 条件边 的前置知识。",
+    }
+
+    result = engine.invoke(
+        task,
+        LearningRuntimeContext(
+            learning_goal="掌握条件边",
+            model_call_limit=3,
+            tool_call_limit=2,
+        ),
+    )
+
+    assert result.graph_report is not None
+    assert result.graph_report.graph_used is True
+    assert result.graph_report.prerequisites[0].prerequisite_name == "State"
+
+
 def test_context_engineered_agent_streams_text_and_finishes_with_report() -> None:
     model = ToolCallingTeachingModel()
     engine = ContextEngineeredTeaching(

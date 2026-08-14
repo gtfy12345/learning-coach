@@ -26,9 +26,9 @@
 
 ## Phase 4: LCEL、Middleware、State 与 Web 集成
 
-- [ ] 4.1 把前置路径加入 LCEL 与 Agent 教学上下文
-- [ ] 4.2 接入 LangGraph State、事件和 Web API
-- [ ] 4.3 实现 Web 概念图与前置解释展示
+- [x] 4.1 把前置路径加入 LCEL 与 Agent 教学上下文
+- [x] 4.2 接入 LangGraph State、事件和 Web API
+- [x] 4.3 实现 Web 概念图与前置解释展示
 
 ## Phase 5: 文档、完整验证与公众号文章
 

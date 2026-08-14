@@ -477,7 +477,7 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
         "/api/sessions/stream",
         data={
             "topic": "LangGraph 条件边",
-            "study_material": "条件边根据结构化 State 选择 retry 或 finish。",
+            "study_material": "State 是 LangGraph 条件边 的前置知识。",
         },
     )
 
@@ -500,6 +500,7 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
     assert "token" in event_names
     assert "sources" in event_names
     assert "retrieval" in event_names
+    assert "knowledge_graph" in event_names
     assert event_names[-2:] == ["state", "done"]
     teaching_text = "".join(
         payload["text"]
@@ -515,6 +516,12 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
         payload for event, payload in answer_events if event == "retrieval"
     )
     assert final_state["retrieval_report"] == retrieval_event["report"]
+    graph_event = next(
+        payload for event, payload in answer_events if event == "knowledge_graph"
+    )
+    assert final_state["graph_report"] == graph_event["report"]
+    assert final_state["graph_report"]["graph_used"] is True
+    assert "vector" not in json.dumps(final_state["graph_report"])
 
 
 class SlowChatModel(FakeChatModel):
@@ -572,6 +579,9 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert 'id="source-urls"' in response.text
     assert 'id="context-ingestion"' in response.text
     assert 'id="context-retrieval"' in response.text
+    assert 'id="concept-graph-card"' in response.text
+    assert 'id="concept-graph-nodes"' in response.text
+    assert 'id="prerequisite-list"' in response.text
     assert 'id="learning-goal"' in response.text
     assert 'id="context-insight"' in response.text
     assert 'id="cancel-run"' in response.text
@@ -589,7 +599,11 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert "context_summary" in app_script
     assert "context_report" in app_script
     assert "retrieval_report" in app_script
+    assert "graph_report" in app_script
     assert 'eventName === "retrieval"' in app_script
+    assert 'eventName === "knowledge_graph"' in app_script
+    assert "renderKnowledgeGraph" in app_script
+    assert "document.createElement" in app_script
     assert "retrieval_score?.rerank" in app_script
     assert "config.embedding_model_id" in app_script
 

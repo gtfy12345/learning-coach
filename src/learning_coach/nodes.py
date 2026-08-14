@@ -96,6 +96,7 @@ class LearningCoachNodes:
         sources: list[Any] = []
         context_report: Any = None
         retrieval_report: Any = None
+        graph_report: Any = None
         for teaching in self.runnables.teach_stream(
             task_input, learning_runtime
         ):
@@ -109,6 +110,15 @@ class LearningCoachNodes:
                         "event": "retrieval",
                         "task": "teaching",
                         "report": retrieval_report.model_dump(),
+                    }
+                )
+            if teaching.graph_report is not None and graph_report is None:
+                graph_report = teaching.graph_report
+                self._write_event(
+                    {
+                        "event": "knowledge_graph",
+                        "task": "teaching",
+                        "report": graph_report.model_dump(),
                     }
                 )
             if teaching.sources and not sources:
@@ -138,6 +148,8 @@ class LearningCoachNodes:
             result["context_report"] = context_report.model_dump()
         if retrieval_report is not None:
             result["retrieval_report"] = retrieval_report.model_dump()
+        if graph_report is not None:
+            result["graph_report"] = graph_report.model_dump()
         return result
 
     def make_quiz(self, state: LearningState) -> dict[str, str]:

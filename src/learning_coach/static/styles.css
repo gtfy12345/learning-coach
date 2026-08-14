@@ -303,6 +303,31 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .message.user .message-body { background: #fff8e9; }
 .message.assessment .message-body { background: var(--teal-soft); }
 
+.concept-graph-card {
+  margin: 4px 0 24px;
+  padding: 22px;
+  border: 1px solid rgba(11, 125, 123, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(230, 243, 241, 0.9), rgba(255, 255, 255, 0.82));
+}
+.concept-graph-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.concept-graph-heading .eyebrow { margin-bottom: 7px; }
+.concept-graph-heading h2 { margin: 0; font-family: ui-serif, Georgia, serif; font-size: 21px; }
+.concept-graph-heading > span { color: var(--muted); font-size: 10px; text-align: right; line-height: 1.5; }
+.concept-graph-nodes { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+.concept-node { padding: 7px 10px; border: 1px solid rgba(22, 42, 53, 0.13); border-radius: 999px; color: var(--ink); background: white; font-size: 11px; font-weight: 700; }
+.concept-node-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.concept-node-abbreviation { color: var(--teal-dark); border-color: rgba(11, 125, 123, 0.3); }
+.concept-relations { margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.concept-relation { padding: 9px 11px; border-left: 3px solid var(--teal); color: var(--muted); background: rgba(255, 255, 255, 0.7); font-size: 11px; line-height: 1.55; }
+.prerequisite-list { margin: 17px 0 0; padding: 0; list-style: none; }
+.prerequisite-list:empty { display: none; }
+.prerequisite-list li { padding: 13px 0; border-top: 1px solid rgba(22, 42, 53, 0.1); }
+.prerequisite-list strong, .prerequisite-list p, .prerequisite-list small { display: block; }
+.prerequisite-list strong { color: var(--teal-dark); font-size: 12px; }
+.prerequisite-list p { margin: 5px 0 0; color: var(--ink); font-size: 12px; line-height: 1.65; }
+.prerequisite-list small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
 .answer-card { position: sticky; bottom: 18px; margin-top: 8px; backdrop-filter: blur(16px); }
 .answer-actions { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .answer-actions small { color: var(--muted); font-size: 10px; }
@@ -349,6 +374,9 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
   .session-heading { display: block; }
   .session-heading .text-button { margin-top: 10px; }
   .message { padding-left: 46px; }
+  .concept-graph-heading { display: block; }
+  .concept-graph-heading > span { display: block; margin-top: 7px; text-align: left; }
+  .concept-relations { grid-template-columns: 1fr; }
   .answer-actions { align-items: stretch; flex-direction: column; }
   .answer-actions small { display: none; }
   .result-card { grid-template-columns: 1fr; }

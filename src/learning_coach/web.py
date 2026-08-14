@@ -34,7 +34,12 @@ from learning_coach.context import (
 from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
 from learning_coach.retrieval import normalize_study_material
-from learning_coach.schemas import ContextReport, RetrievalReport, StudySource
+from learning_coach.schemas import (
+    ContextReport,
+    GraphRAGReport,
+    RetrievalReport,
+    StudySource,
+)
 
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
@@ -101,6 +106,7 @@ class SessionView(BaseModel):
     context_report: ContextReport | None = None
     ingestion_report: IngestionReport | None = None
     retrieval_report: RetrievalReport | None = None
+    graph_report: GraphRAGReport | None = None
     question: str | None = None
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
@@ -466,6 +472,7 @@ class LearningSessionService:
                 context_report=state.get("context_report"),
                 ingestion_report=state.get("ingestion_report"),
                 retrieval_report=state.get("retrieval_report"),
+                graph_report=state.get("graph_report"),
                 question=str(payload.get("question", "")),
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
@@ -490,6 +497,7 @@ class LearningSessionService:
             context_report=state.get("context_report"),
             ingestion_report=state.get("ingestion_report"),
             retrieval_report=state.get("retrieval_report"),
+            graph_report=state.get("graph_report"),
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),

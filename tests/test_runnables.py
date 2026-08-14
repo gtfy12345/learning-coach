@@ -311,6 +311,32 @@ Reducer 决定 LangGraph 并行节点更新同一 State 字段时如何合并。
     assert result.sources[0].text in teaching_message
 
 
+def test_teaching_rag_includes_prerequisite_explanation_in_prompt_and_result() -> None:
+    model = FakeChatModel()
+    tasks = LearningCoachRunnables.from_models(
+        LearningCoachModels.from_models(model)
+    )
+
+    result = tasks.teaching.invoke(
+        {
+            "topic": "条件路由",
+            "diagnostic_focus": "条件路由",
+            "diagnostic_difficulty": "foundation",
+            "diagnostic_answer": "不了解 State",
+            "feedback": "先补 Reducer",
+            "missing_point": "Reducer",
+            "recent_errors": ["Reducer 不熟悉"],
+            "study_material": "Reducer 是 条件路由 的前置知识。",
+        }
+    )
+
+    assert result.graph_report is not None
+    assert result.graph_report.prerequisites[0].prerequisite_name == "Reducer"
+    teaching_message = model.text_messages[-1][1].content
+    assert "前置知识建议" in teaching_message
+    assert "Reducer → 条件路由" in teaching_message
+
+
 def test_teaching_runnable_graph_contains_advanced_lcel_composition() -> None:
     tasks = LearningCoachRunnables.from_models(
         LearningCoachModels.from_models(FakeChatModel())

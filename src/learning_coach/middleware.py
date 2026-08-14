@@ -24,9 +24,11 @@ from learning_coach.context import (
     build_teaching_context,
 )
 from learning_coach.hybrid_rag import HybridRetrievalResult, HybridStudyRetriever
+from learning_coach.knowledge_graph import GraphStudyRetriever
 from learning_coach.retrieval import retrieve_study_sources_with_report
 from learning_coach.schemas import (
     ContextReport,
+    GraphRAGReport,
     GroundedTeaching,
     RetrievalReport,
     StudySource,
@@ -40,7 +42,9 @@ class TeachingAgentRuntime:
     learning: LearningRuntimeContext
     teaching: TeachingContext
     task: dict[str, Any]
-    retriever: HybridStudyRetriever = field(default_factory=HybridStudyRetriever)
+    retriever: HybridStudyRetriever | GraphStudyRetriever = field(
+        default_factory=GraphStudyRetriever
+    )
 
 
 @tool
@@ -50,18 +54,25 @@ def search_study_material(
 ) -> str:
     """Search the current session's pasted study material for relevant evidence."""
 
-    sources = search_runtime_material(runtime.context, query)
-    if not sources:
+    retrieval = search_runtime_material_result(runtime.context, query)
+    if not retrieval.sources:
         return "没有找到相关资料片段。"
-    return "\n\n".join(
+    source_context = "\n\n".join(
         (
-            f"[{source['source_id']}"
-            f"{f' | {source.get('source_name')}' if source.get('source_name') else ''}"
-            f"{f' · {source.get('location')}' if source.get('location') else ''}] "
-            f"{source['text']}"
+            f"[{source.source_id}"
+            f"{f' | {source.source_name}' if source.source_name else ''}"
+            f"{f' · {source.location}' if source.location else ''}] "
+            f"{source.text}"
         )
-        for source in sources
+        for source in retrieval.sources
     )
+    graph_report = retrieval.graph_report
+    if graph_report is None or not graph_report.prerequisites:
+        return source_context
+    reasons = "\n".join(
+        f"- {item.reason}" for item in graph_report.prerequisites
+    )
+    return f"{source_context}\n\n前置知识建议：\n{reasons}"
 
 
 @tool
@@ -247,13 +258,13 @@ class ContextEngineeredTeaching:
         fallback_runnable: Runnable[dict[str, Any], GroundedTeaching],
         advanced_model: Any | None = None,
         agent_fallback_model: Any | None = None,
-        retriever: HybridStudyRetriever | None = None,
+        retriever: HybridStudyRetriever | GraphStudyRetriever | None = None,
     ) -> None:
         self.primary_model = primary_model
         self.advanced_model = advanced_model
         self.agent_fallback_model = agent_fallback_model
         self.fallback_runnable = fallback_runnable
-        self.retriever = retriever or HybridStudyRetriever()
+        self.retriever = retriever or GraphStudyRetriever()
 
     def invoke(
         self,
@@ -278,7 +289,7 @@ class ContextEngineeredTeaching:
             },
             context=agent_runtime,
         )
-        text, sources, report, retrieval_report = self._agent_result(
+        text, sources, report, retrieval_report, graph_report = self._agent_result(
             result, agent_runtime, selected_tier
         )
         return GroundedTeaching(
@@ -286,6 +297,7 @@ class ContextEngineeredTeaching:
             sources=sources,
             context_report=report,
             retrieval_report=retrieval_report,
+            graph_report=graph_report,
         )
 
     def stream(
@@ -333,7 +345,7 @@ class ContextEngineeredTeaching:
                 emitted_text = True
                 yield GroundedTeaching(text=text)
 
-        text, sources, report, retrieval_report = self._agent_result(
+        text, sources, report, retrieval_report, graph_report = self._agent_result(
             final_state, agent_runtime, selected_tier
         )
         if not emitted_text:
@@ -343,6 +355,7 @@ class ContextEngineeredTeaching:
             sources=sources,
             context_report=report,
             retrieval_report=retrieval_report,
+            graph_report=graph_report,
         )
 
     def _agent_result(
@@ -350,7 +363,13 @@ class ContextEngineeredTeaching:
         result: dict[str, Any],
         agent_runtime: TeachingAgentRuntime,
         selected_tier: str,
-    ) -> tuple[str, list[StudySource], ContextReport, RetrievalReport | None]:
+    ) -> tuple[
+        str,
+        list[StudySource],
+        ContextReport,
+        RetrievalReport | None,
+        GraphRAGReport | None,
+    ]:
         messages = list(result.get("messages", []))
         ai_messages = [
             message for message in messages if isinstance(message, AIMessage)
@@ -367,6 +386,7 @@ class ContextEngineeredTeaching:
         ]
         sources: list[StudySource] = []
         retrieval_report: RetrievalReport | None = None
+        graph_report: GraphRAGReport | None = None
         for message in ai_messages:
             for call in message.tool_calls:
                 if call["name"] != search_study_material.name:
@@ -375,6 +395,7 @@ class ContextEngineeredTeaching:
                     agent_runtime, str(call.get("args", {}).get("query", ""))
                 )
                 retrieval_report = retrieval.report
+                graph_report = retrieval.graph_report
                 for candidate in retrieval.sources:
                     if all(
                         existing.source_id != candidate.source_id
@@ -398,6 +419,7 @@ class ContextEngineeredTeaching:
                 summary_applied=bool(agent_runtime.teaching.context_summary),
             ),
             retrieval_report,
+            graph_report,
         )
 
     def _stream_lcel(

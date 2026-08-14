@@ -20,8 +20,8 @@ from learning_coach.context import LearningRuntimeContext
 from learning_coach.hybrid_rag import (
     HybridRetrievalResult,
     HybridStudyRetriever,
-    create_hybrid_retriever,
 )
+from learning_coach.knowledge_graph import GraphStudyRetriever, create_graph_retriever
 from learning_coach.middleware import ContextEngineeredTeaching
 from learning_coach.model import LearningCoachModels
 from learning_coach.retrieval import retrieve_study_sources_with_report
@@ -159,7 +159,7 @@ def _teaching_query(values: TaskInput) -> str:
 
 def _retrieve_teaching_evidence(
     values: TaskInput,
-    retriever: HybridStudyRetriever,
+    retriever: HybridStudyRetriever | GraphStudyRetriever,
 ) -> HybridRetrievalResult | None:
     if not values.get("study_material") and not values.get("study_chunks"):
         return None
@@ -177,7 +177,7 @@ def _format_study_context(values: TaskInput) -> str:
     sources = retrieval.sources if isinstance(retrieval, HybridRetrievalResult) else []
     if not sources:
         return "没有可用参考资料，请基于通用知识讲解，并避免声称引用了资料。"
-    return "\n\n".join(
+    source_context = "\n\n".join(
         (
             f"[{source.source_id}"
             f"{f' | {source.source_name}' if source.source_name else ''}"
@@ -185,6 +185,18 @@ def _format_study_context(values: TaskInput) -> str:
         )
         for source in sources
         if isinstance(source, StudySource)
+    )
+    graph_report = retrieval.graph_report
+    if graph_report is None or not graph_report.prerequisites:
+        return source_context
+    prerequisites = "\n".join(
+        f"- {item.reason}"
+        f"{f' 证据位置：{'；'.join(item.evidence_locations)}' if item.evidence_locations else ''}"
+        for item in graph_report.prerequisites
+    )
+    return (
+        f"{source_context}\n\n前置知识建议（只根据资料路径解释，不推断掌握状态）：\n"
+        f"{prerequisites}"
     )
 
 
@@ -225,6 +237,8 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
         sources: list[StudySource] | None = None
         retrieval_report: Any = None
         retrieval_report_seen = False
+        graph_report: Any = None
+        graph_report_seen = False
         buffered_text: list[str] = []
         sources_emitted = False
         for chunk in input:
@@ -233,15 +247,26 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
             if "retrieval_report" in chunk:
                 retrieval_report = chunk["retrieval_report"]
                 retrieval_report_seen = True
+            if "graph_report" in chunk:
+                graph_report = chunk["graph_report"]
+                graph_report_seen = True
             if "text" in chunk:
                 buffered_text.append(str(chunk["text"]))
-            if sources is not None and retrieval_report_seen and buffered_text:
+            if (
+                sources is not None
+                and retrieval_report_seen
+                and graph_report_seen
+                and buffered_text
+            ):
                 for text in buffered_text:
                     yield GroundedTeaching(
                         text=text,
                         sources=sources if not sources_emitted else [],
                         retrieval_report=(
                             retrieval_report if not sources_emitted else None
+                        ),
+                        graph_report=(
+                            graph_report if not sources_emitted else None
                         ),
                     )
                     sources_emitted = True
@@ -253,6 +278,7 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
                 retrieval_report=(
                     retrieval_report if not sources_emitted else None
                 ),
+                graph_report=(graph_report if not sources_emitted else None),
             )
             sources_emitted = True
 
@@ -265,6 +291,8 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
         sources: list[StudySource] | None = None
         retrieval_report: Any = None
         retrieval_report_seen = False
+        graph_report: Any = None
+        graph_report_seen = False
         buffered_text: list[str] = []
         sources_emitted = False
         async for chunk in input:
@@ -273,15 +301,26 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
             if "retrieval_report" in chunk:
                 retrieval_report = chunk["retrieval_report"]
                 retrieval_report_seen = True
+            if "graph_report" in chunk:
+                graph_report = chunk["graph_report"]
+                graph_report_seen = True
             if "text" in chunk:
                 buffered_text.append(str(chunk["text"]))
-            if sources is not None and retrieval_report_seen and buffered_text:
+            if (
+                sources is not None
+                and retrieval_report_seen
+                and graph_report_seen
+                and buffered_text
+            ):
                 for text in buffered_text:
                     yield GroundedTeaching(
                         text=text,
                         sources=sources if not sources_emitted else [],
                         retrieval_report=(
                             retrieval_report if not sources_emitted else None
+                        ),
+                        graph_report=(
+                            graph_report if not sources_emitted else None
                         ),
                     )
                     sources_emitted = True
@@ -293,6 +332,7 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
                 retrieval_report=(
                     retrieval_report if not sources_emitted else None
                 ),
+                graph_report=(graph_report if not sources_emitted else None),
             )
             sources_emitted = True
 
@@ -300,7 +340,7 @@ class GroundedTeachingParser(Runnable[TaskInput, GroundedTeaching]):
 def _grounded_teaching_chain(
     prompt: ChatPromptTemplate,
     model: Any,
-    retriever: HybridStudyRetriever,
+    retriever: HybridStudyRetriever | GraphStudyRetriever,
 ) -> Runnable[TaskInput, GroundedTeaching]:
     retrieval = RunnableParallel(
         task=RunnablePassthrough(),
@@ -335,6 +375,13 @@ def _grounded_teaching_chain(
             retrieval_report=RunnableLambda(
                 lambda values: (
                     values["retrieval"].report
+                    if isinstance(values["retrieval"], HybridRetrievalResult)
+                    else None
+                )
+            ),
+            graph_report=RunnableLambda(
+                lambda values: (
+                    values["retrieval"].graph_report
                     if isinstance(values["retrieval"], HybridRetrievalResult)
                     else None
                 )
@@ -434,9 +481,9 @@ class LearningCoachRunnables:
         cls,
         models: LearningCoachModels,
         *,
-        retriever: HybridStudyRetriever | None = None,
+        retriever: HybridStudyRetriever | GraphStudyRetriever | None = None,
     ) -> "LearningCoachRunnables":
-        hybrid_retriever = retriever or create_hybrid_retriever()
+        hybrid_retriever = retriever or create_graph_retriever()
         diagnostic_adapter = RunnableLambda(_diagnostic_input)
         diagnostic_primary = _structured_chain(
             DIAGNOSTIC_PROMPT,

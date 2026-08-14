@@ -27,6 +27,11 @@ const contextMastery = document.querySelector("#context-mastery");
 const contextBudget = document.querySelector("#context-budget");
 const contextIngestion = document.querySelector("#context-ingestion");
 const contextRetrieval = document.querySelector("#context-retrieval");
+const conceptGraphCard = document.querySelector("#concept-graph-card");
+const conceptGraphMeta = document.querySelector("#concept-graph-meta");
+const conceptGraphNodes = document.querySelector("#concept-graph-nodes");
+const conceptRelations = document.querySelector("#concept-relations");
+const prerequisiteList = document.querySelector("#prerequisite-list");
 
 let sessionId = null;
 let activeController = null;
@@ -109,13 +114,74 @@ function sourceText(sources) {
   return sources
     .map((source) => {
       const label = [source.source_name, source.location].filter(Boolean).join(" · ");
-      const score = source.retrieval_score?.rerank ?? source.score;
+      const score = source.retrieval_score?.graph_fusion
+        ?? source.retrieval_score?.rerank
+        ?? source.score;
       const relevance = Number.isFinite(score)
         ? ` · 相关度 ${Math.round(score * 100)}%`
         : "";
       return `[${label || source.source_id}${relevance}] ${source.text}`;
     })
     .join("\n\n");
+}
+
+function renderKnowledgeGraph(report) {
+  const nodes = Array.isArray(report?.nodes) ? report.nodes : [];
+  const relations = Array.isArray(report?.relations) ? report.relations : [];
+  const prerequisites = Array.isArray(report?.prerequisites)
+    ? report.prerequisites
+    : [];
+  const meaningful = nodes.length > 0 && (relations.length > 0 || prerequisites.length > 0);
+  conceptGraphCard.hidden = !meaningful;
+  conceptGraphNodes.replaceChildren();
+  conceptRelations.replaceChildren();
+  prerequisiteList.replaceChildren();
+  if (!meaningful) return;
+
+  const extractionLabels = {
+    deterministic: "离线抽取",
+    model_augmented: "模型增强",
+    fallback: "安全降级",
+  };
+  conceptGraphMeta.textContent = `${nodes.length} 个概念 · ${relations.length} 条关系 · ${extractionLabels[report.extraction_mode] || report.extraction_mode}`;
+  const nodeNames = new Map(nodes.map((node) => [node.concept_id, node.name]));
+
+  nodes.slice(0, 24).forEach((node) => {
+    const chip = document.createElement("span");
+    chip.className = `concept-node concept-node-${node.kind}`;
+    chip.textContent = node.name;
+    chip.title = node.aliases?.length ? `别名：${node.aliases.join("、")}` : node.kind;
+    conceptGraphNodes.append(chip);
+  });
+
+  const relationLabels = {
+    prerequisite_of: "是前置知识 →",
+    part_of: "组成 →",
+    related_to: "关联 ↔",
+  };
+  relations.slice(0, 20).forEach((relation) => {
+    const row = document.createElement("div");
+    row.className = "concept-relation";
+    const source = nodeNames.get(relation.from_concept_id) || "未知概念";
+    const target = nodeNames.get(relation.to_concept_id) || "未知概念";
+    row.textContent = `${source} ${relationLabels[relation.relation_type] || relation.relation_type} ${target}`;
+    conceptRelations.append(row);
+  });
+
+  prerequisites.forEach((item) => {
+    const entry = document.createElement("li");
+    const path = document.createElement("strong");
+    path.textContent = item.path_names.join(" → ");
+    const reason = document.createElement("p");
+    reason.textContent = item.reason;
+    entry.append(path, reason);
+    if (item.evidence_locations?.length) {
+      const locations = document.createElement("small");
+      locations.textContent = `依据：${item.evidence_locations.join("；")}`;
+      entry.append(locations);
+    }
+    prerequisiteList.append(entry);
+  });
 }
 
 function retrievalText(report) {
@@ -159,6 +225,10 @@ function updateContextInsight(data) {
     ? `资料 ${ingestion.sources_received} 个 · 新增 ${ingestion.sources_added} · 更新 ${ingestion.sources_updated} · 跳过 ${ingestion.sources_skipped}`
     : "尚未摄取学习资料";
   contextRetrieval.textContent = retrievalText(data.retrieval_report);
+  if (data.graph_report?.graph_used) {
+    contextRetrieval.textContent += ` · GraphRAG ${data.graph_report.prerequisites.length} 条前置路径`;
+  }
+  renderKnowledgeGraph(data.graph_report);
   if (data.context_summary) contextGoal.title = data.context_summary;
 }
 
@@ -298,6 +368,9 @@ answerForm.addEventListener("submit", async (event) => {
         if (eventName === "retrieval" && payload.report) {
           contextRetrieval.textContent = retrievalText(payload.report);
         }
+        if (eventName === "knowledge_graph" && payload.report) {
+          renderKnowledgeGraph(payload.report);
+        }
         if (eventName === "state") finalState = payload;
         if (eventName === "error") throw { detail: payload.message };
       },
@@ -366,6 +439,7 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   contextBudget.textContent = "预算将在讲解后显示";
   contextIngestion.textContent = "尚未摄取学习资料";
   contextRetrieval.textContent = "检索将在讲解时运行";
+  renderKnowledgeGraph(null);
   topicInput.focus();
 });
 

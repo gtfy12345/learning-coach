@@ -15,6 +15,7 @@ class LearningState(TypedDict, total=False):
     study_chunks: list[dict[str, Any]]
     ingestion_report: dict[str, Any]
     retrieval_report: dict[str, Any]
+    graph_report: dict[str, Any]
     diagnostic_question: str
     diagnostic_focus: str
     diagnostic_difficulty: str
