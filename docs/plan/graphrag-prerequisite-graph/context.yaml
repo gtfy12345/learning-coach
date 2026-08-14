@@ -1,0 +1,54 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: graphrag-prerequisite-graph
+  baseBranch: main
+  branch: codex/graphrag-prerequisite-graph-0815
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - graphrag-prerequisite-graph
+      - GraphRAG 与知识前置图
+      - 概念图谱
+      - 前置知识图
+    keywords:
+      - entity relation extraction disambiguation graph traversal graph vector fusion
+      - 实体关系抽取 消歧 图遍历 图与向量融合 前置知识解释
+    relatedSpecs:
+      - ../../spec/graphrag-prerequisite-graph-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/graphrag-prerequisite-graph-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../../spec/self-corrective-hybrid-rag-design.md
+        - ../self-corrective-hybrid-rag/implementation.md
+      discovery:
+        packages:
+          - src/learning_coach/knowledge_graph.py
+          - src/learning_coach/hybrid_rag.py
+          - src/learning_coach/retrieval.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/middleware.py
+          - src/learning_coach/schemas.py
+          - src/learning_coach/state.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests
+        apiNames:
+          - ConceptGraph
+          - EntityRelationExtractor
+          - GraphStudyRetriever
+          - GraphRAGReport
+          - PrerequisiteExplanation
+        uiRoutes:
+          - /
+          - /api/sessions
+          - /api/sessions/stream
+        commands:
+          - PYTHONPATH=src pytest
