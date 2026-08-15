@@ -416,3 +416,25 @@ def test_resolve_teaching_retriever_prefers_engine_retriever() -> None:
 
     tasks = _tasks(lambda values: GroundedTeaching(text="讲解", sources=[]))
     assert isinstance(resolve_teaching_retriever(tasks), GraphStudyRetriever)
+
+
+def test_public_docs_describe_multi_agent_orchestration_contract() -> None:
+    from pathlib import Path
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    for term in (
+        "多 Agent 与任务编排",
+        "Router",
+        "Send",
+        "Orchestrator-Worker",
+        "Subgraph",
+        "Handoff",
+        "AgentHandoff",
+        "prepared_retrieval",
+        "修订至多一次",
+        "确定性规则",
+    ):
+        assert term in readme
