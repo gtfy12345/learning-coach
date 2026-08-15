@@ -1,7 +1,7 @@
 # LangGraph 状态图进阶单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-15
 
 **关联测试计划**: [unit-test-plan.md](./unit-test-plan.md)
@@ -38,5 +38,5 @@
 
 ## Phase 5: 公开文档与回归
 
-- [ ] 5.1 README 契约测试
-- [ ] 5.2 全量回归通过
+- [x] 5.1 README 契约测试
+- [x] 5.2 全量回归通过

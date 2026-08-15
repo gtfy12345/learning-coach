@@ -246,3 +246,29 @@ def test_different_images_do_not_share_diagnostic_cache() -> None:
     )
 
     assert model.diagnostic_calls == 2
+
+
+def test_public_docs_describe_advanced_state_runtime_contract() -> None:
+    from pathlib import Path
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(
+        encoding="utf-8"
+    )
+    env_example = (
+        Path(__file__).parents[1] / ".env.example"
+    ).read_text(encoding="utf-8")
+
+    for term in (
+        "Command",
+        "Reducer",
+        "RetryPolicy",
+        "CachePolicy",
+        "GRAPH_NODE_CACHE",
+        "并行 fan-out",
+        "瞬态",
+        "learning_events",
+        "顺序不保证",
+    ):
+        assert term in readme
+    assert "GRAPH_NODE_CACHE=true" in env_example
+    assert "GRAPH_NODE_CACHE=false" in readme

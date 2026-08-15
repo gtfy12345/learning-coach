@@ -1,7 +1,7 @@
 # LangGraph 状态图进阶实施 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-15
 
 **关联计划**: [implementation.md](./implementation.md)
@@ -29,6 +29,6 @@
 
 ## Phase 5: 公开文档、完整验证与公众号文章
 
-- [ ] 5.1 更新 README 与 .env.example
-- [ ] 5.2 完成全量回归、文档生命周期同步与交付复盘
-- [ ] 5.3 生成并检查第 09 篇公众号文章
+- [x] 5.1 更新 README 与 .env.example
+- [x] 5.2 完成全量回归、文档生命周期同步与交付复盘
+- [x] 5.3 生成并检查第 09 篇公众号文章
