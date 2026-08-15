@@ -14,13 +14,13 @@
 
 ## Phase 2: 节点级 Retry 与瞬态错误分类
 
-- [ ] 2.1 实现瞬态错误分类与默认重试策略
-- [ ] 2.2 为模型节点挂接 RetryPolicy
+- [x] 2.1 实现瞬态错误分类与默认重试策略
+- [x] 2.2 为模型节点挂接 RetryPolicy
 
 ## Phase 3: 节点级 Cache
 
-- [ ] 3.1 纯函数化诊断节点并定义缓存键
-- [ ] 3.2 接入 CachePolicy 与 GRAPH_NODE_CACHE 开关
+- [x] 3.1 纯函数化诊断节点并定义缓存键
+- [x] 3.2 接入 CachePolicy 与 GRAPH_NODE_CACHE 开关
 
 ## Phase 4: 循环终止验证与 Web 集成
 
