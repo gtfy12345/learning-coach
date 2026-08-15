@@ -203,3 +203,25 @@ def test_safety_findings_flow_through_collect_nodes() -> None:
     assert all(finding.get("source") == "diagnostic_answer" for finding in findings)
     dumped = str(findings)
     assert "alice@example.com" not in dumped
+
+
+def test_public_docs_describe_evaluation_and_security_contract() -> None:
+    from pathlib import Path
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+
+    for term in (
+        "评价、安全与完整交付",
+        "评估集",
+        "hit@3",
+        "MRR",
+        "轨迹评价",
+        "掌握图谱",
+        "PII",
+        "Prompt 注入",
+        "safety_findings",
+        "阶段报告",
+        "learning_coach evaluate",
+        "定界符",
+    ):
+        assert term in readme
