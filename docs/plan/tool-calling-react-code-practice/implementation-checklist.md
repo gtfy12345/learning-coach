@@ -25,9 +25,9 @@
 
 ## Phase 4: LangGraph、SSE 与 Web 集成
 
-- [ ] 4.1 把代码练习接入练习生成、interrupt 与评价节点
-- [ ] 4.2 接入 State、会话 API 和 SSE 事件
-- [ ] 4.3 实现 Web 代码输入和测试/提示展示
+- [x] 4.1 把代码练习接入练习生成、interrupt 与评价节点
+- [x] 4.2 接入 State、会话 API 和 SSE 事件
+- [x] 4.3 实现 Web 代码输入和测试/提示展示
 
 ## Phase 5: 公开文档、完整验证与公众号文章
 

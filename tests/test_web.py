@@ -148,6 +148,61 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert "下一步" in final["summary"]
 
 
+def test_web_code_practice_runs_tests_without_exposing_hidden_cases() -> None:
+    client, _ = make_client()
+
+    started = client.post(
+        "/api/sessions", data={"topic": "Python 函数"}
+    ).json()
+    taught = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "函数接收参数并返回结果。"},
+    ).json()
+
+    assert taught["stage"] == "quiz"
+    assert taught["code_exercise"]["entrypoint"] == "clamp_score"
+    assert "tests" not in taught["code_exercise"]
+    assert taught["code_exercise"]["total_test_count"] == 4
+    assert taught["code_exercise"]["visible_test_count"] == 2
+
+    completed = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={
+            "answer": "def clamp_score(score):\n    return min(100, max(0, score))"
+        },
+    ).json()
+
+    assert completed["status"] == "completed"
+    assert completed["score"] == 100
+    assert completed["code_practice_report"]["passed_tests"] == 4
+    assert completed["code_tool_trace"][0]["tool_name"] == "run_code_tests"
+    assert "/Users/" not in json.dumps(completed)
+
+
+def test_stream_emits_safe_code_practice_events() -> None:
+    client, _ = make_client()
+    started = client.post(
+        "/api/sessions/stream", data={"topic": "Python 函数"}
+    )
+    start_state = next(
+        payload for event, payload in _sse_events(started) if event == "state"
+    )
+
+    taught = client.post(
+        f"/api/sessions/{start_state['session_id']}/answers/stream",
+        json={"answer": "函数返回计算结果。"},
+    )
+    events = _sse_events(taught)
+    generated = next(
+        payload
+        for event, payload in events
+        if event == "code_practice" and payload["stage"] == "generated"
+    )
+
+    assert generated["exercise"]["entrypoint"] == "clamp_score"
+    assert "tests" not in generated["exercise"]
+
+
 def test_web_accepts_learning_goal_and_exposes_context_progress() -> None:
     client, _ = make_client(scores=(60, 88))
 
@@ -582,6 +637,9 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert 'id="concept-graph-card"' in response.text
     assert 'id="concept-graph-nodes"' in response.text
     assert 'id="prerequisite-list"' in response.text
+    assert 'id="code-practice-card"' in response.text
+    assert 'id="code-test-results"' in response.text
+    assert 'id="code-hints"' in response.text
     assert 'id="learning-goal"' in response.text
     assert 'id="context-insight"' in response.text
     assert 'id="cancel-run"' in response.text
@@ -602,6 +660,8 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert "graph_report" in app_script
     assert 'eventName === "retrieval"' in app_script
     assert 'eventName === "knowledge_graph"' in app_script
+    assert 'eventName === "code_practice"' in app_script
+    assert "renderCodePractice" in app_script
     assert "renderKnowledgeGraph" in app_script
     assert "document.createElement" in app_script
     assert "retrieval_score?.rerank" in app_script

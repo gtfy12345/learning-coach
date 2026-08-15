@@ -328,6 +328,29 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
 .prerequisite-list p { margin: 5px 0 0; color: var(--ink); font-size: 12px; line-height: 1.65; }
 .prerequisite-list small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 
+.code-practice-card {
+  margin: 4px 0 24px;
+  padding: 22px;
+  border: 1px solid rgba(57, 80, 127, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(237, 241, 249, 0.96), rgba(255, 255, 255, 0.84));
+}
+.code-practice-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.code-practice-heading h2 { margin: 0; font-family: ui-serif, Georgia, serif; font-size: 21px; }
+.code-practice-heading > span { color: var(--muted); font-size: 10px; text-align: right; }
+.code-practice-card > p { color: var(--ink); font-size: 13px; line-height: 1.7; }
+.code-practice-card pre { overflow-x: auto; padding: 14px 16px; border-radius: 12px; color: #e8edf7; background: #162a35; font-size: 12px; line-height: 1.65; }
+.code-test-results, .code-hints { margin: 14px 0 0; padding: 0; list-style: none; }
+.code-test-results:empty, .code-hints:empty { display: none; }
+.code-test-results li { padding: 8px 10px; border-bottom: 1px solid rgba(22,42,53,0.09); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.code-test-passed { color: var(--teal-dark); }
+.code-test-failed, .code-test-error { color: #a44949; }
+.code-hints { counter-reset: none; }
+.code-hints li { padding: 11px 0; display: grid; grid-template-columns: 62px 1fr; gap: 10px; border-top: 1px solid rgba(22,42,53,0.09); }
+.code-hints strong { color: var(--teal-dark); font-size: 11px; }
+.code-hints span { color: var(--ink); font-size: 12px; line-height: 1.65; }
+.code-safety-notice { display: block; margin-top: 14px; color: var(--muted); line-height: 1.55; }
+
 .answer-card { position: sticky; bottom: 18px; margin-top: 8px; backdrop-filter: blur(16px); }
 .answer-actions { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .answer-actions small { color: var(--muted); font-size: 10px; }
@@ -377,6 +400,8 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
   .concept-graph-heading { display: block; }
   .concept-graph-heading > span { display: block; margin-top: 7px; text-align: left; }
   .concept-relations { grid-template-columns: 1fr; }
+  .code-practice-heading { display: block; }
+  .code-practice-heading > span { display: block; margin-top: 7px; text-align: left; }
   .answer-actions { align-items: stretch; flex-direction: column; }
   .answer-actions small { display: none; }
   .result-card { grid-template-columns: 1fr; }

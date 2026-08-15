@@ -23,6 +23,9 @@ class LearningState(TypedDict, total=False):
     explanation: str
     explanation_sources: list[dict[str, Any]]
     quiz_question: str
+    code_exercise: dict[str, Any]
+    code_practice_report: dict[str, Any]
+    code_tool_trace: list[dict[str, Any]]
     quiz_answer: str
     score: int
     feedback: str

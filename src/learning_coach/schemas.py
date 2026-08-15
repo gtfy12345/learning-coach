@@ -59,6 +59,34 @@ class CodeExercise(BaseModel):
     tests: list[CodeTestCase] = Field(min_length=1, max_length=12)
 
 
+class CodeExerciseView(BaseModel):
+    """Public exercise projection that never exposes server-owned test cases."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exercise_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=128)
+    instructions: str = Field(min_length=1, max_length=1_000)
+    entrypoint: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+    starter_code: str = Field(min_length=1, max_length=12_000)
+    difficulty: CodeDifficulty
+    visible_test_count: int = Field(ge=0, le=12)
+    total_test_count: int = Field(ge=1, le=12)
+
+    @classmethod
+    def from_exercise(cls, exercise: CodeExercise) -> "CodeExerciseView":
+        return cls(
+            exercise_id=exercise.exercise_id,
+            title=exercise.title,
+            instructions=exercise.instructions,
+            entrypoint=exercise.entrypoint,
+            starter_code=exercise.starter_code,
+            difficulty=exercise.difficulty,
+            visible_test_count=sum(test.visible for test in exercise.tests),
+            total_test_count=len(exercise.tests),
+        )
+
+
 class GenerateCodeExerciseInput(BaseModel):
     """Validated arguments for the exercise-generation tool."""
 

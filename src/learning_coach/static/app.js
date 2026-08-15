@@ -32,9 +32,18 @@ const conceptGraphMeta = document.querySelector("#concept-graph-meta");
 const conceptGraphNodes = document.querySelector("#concept-graph-nodes");
 const conceptRelations = document.querySelector("#concept-relations");
 const prerequisiteList = document.querySelector("#prerequisite-list");
+const codePracticeCard = document.querySelector("#code-practice-card");
+const codePracticeTitle = document.querySelector("#code-practice-title");
+const codePracticeMeta = document.querySelector("#code-practice-meta");
+const codePracticeInstructions = document.querySelector("#code-practice-instructions");
+const codeStarter = document.querySelector("#code-starter");
+const codeTestResults = document.querySelector("#code-test-results");
+const codeHints = document.querySelector("#code-hints");
+const codeSafetyNotice = document.querySelector("#code-safety-notice");
 
 let sessionId = null;
 let activeController = null;
+let currentCodeExercise = null;
 
 function errorDetail(error) {
   const detail = error?.detail;
@@ -184,6 +193,46 @@ function renderKnowledgeGraph(report) {
   });
 }
 
+function renderCodePractice(data) {
+  const exercise = data?.code_exercise || data?.exercise || null;
+  const report = data?.code_practice_report || data?.report || null;
+  currentCodeExercise = exercise;
+  codePracticeCard.hidden = !exercise && !report;
+  codeTestResults.replaceChildren();
+  codeHints.replaceChildren();
+  if (!exercise && !report) return;
+
+  if (exercise) {
+    codePracticeTitle.textContent = exercise.title;
+    codePracticeMeta.textContent = `${exercise.entrypoint} · ${exercise.total_test_count} 个测试`;
+    codePracticeInstructions.textContent = exercise.instructions;
+    codeStarter.textContent = exercise.starter_code;
+    if (!answerInput.value.trim()) answerInput.value = exercise.starter_code;
+    answerInput.placeholder = "提交完整 Python 函数代码；⌘/Ctrl + Enter 运行测试。";
+  }
+  if (report) {
+    codePracticeMeta.textContent = `${report.passed_tests}/${report.total_tests} 通过 · ${report.error_type}`;
+    report.outcomes.forEach((outcome) => {
+      const item = document.createElement("li");
+      item.className = `code-test-${outcome.status}`;
+      item.textContent = `${outcome.test_id} · ${outcome.status} · ${outcome.summary}`;
+      codeTestResults.append(item);
+    });
+    report.hints.forEach((hint) => {
+      const item = document.createElement("li");
+      const label = document.createElement("strong");
+      const text = document.createElement("span");
+      label.textContent = `提示 ${hint.level}`;
+      text.textContent = hint.text;
+      item.append(label, text);
+      codeHints.append(item);
+    });
+    codeSafetyNotice.textContent = report.safety_notice;
+  } else {
+    codeSafetyNotice.textContent = "测试由本地受限执行器运行；它不是面向恶意代码的强隔离沙箱。";
+  }
+}
+
 function retrievalText(report) {
   if (!report) return "检索将在讲解时运行";
   const quality = {
@@ -229,6 +278,7 @@ function updateContextInsight(data) {
     contextRetrieval.textContent += ` · GraphRAG ${data.graph_report.prerequisites.length} 条前置路径`;
   }
   renderKnowledgeGraph(data.graph_report);
+  renderCodePractice(data);
   if (data.context_summary) contextGoal.title = data.context_summary;
 }
 
@@ -333,7 +383,7 @@ answerForm.addEventListener("submit", async (event) => {
   const answer = answerInput.value.trim();
   if (!answer) return;
   answerError.textContent = "";
-  addMessage("user", "你的回答", answer);
+  addMessage("user", currentCodeExercise ? "你的代码" : "你的回答", answer);
   answerInput.value = "";
   setProgress("assessment");
   setLoading(answerForm, true);
@@ -370,6 +420,9 @@ answerForm.addEventListener("submit", async (event) => {
         }
         if (eventName === "knowledge_graph" && payload.report) {
           renderKnowledgeGraph(payload.report);
+        }
+        if (eventName === "code_practice") {
+          renderCodePractice(payload);
         }
         if (eventName === "state") finalState = payload;
         if (eventName === "error") throw { detail: payload.message };
@@ -440,6 +493,8 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   contextIngestion.textContent = "尚未摄取学习资料";
   contextRetrieval.textContent = "检索将在讲解时运行";
   renderKnowledgeGraph(null);
+  renderCodePractice(null);
+  answerInput.placeholder = "用自己的话回答。不确定也没关系，诊断比猜对更重要。";
   topicInput.focus();
 });
 

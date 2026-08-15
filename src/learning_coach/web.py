@@ -35,10 +35,14 @@ from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
 from learning_coach.retrieval import normalize_study_material
 from learning_coach.schemas import (
+    CodeExercise,
+    CodeExerciseView,
+    CodePracticeReport,
     ContextReport,
     GraphRAGReport,
     RetrievalReport,
     StudySource,
+    ToolTraceEntry,
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -108,6 +112,9 @@ class SessionView(BaseModel):
     retrieval_report: RetrievalReport | None = None
     graph_report: GraphRAGReport | None = None
     question: str | None = None
+    code_exercise: CodeExerciseView | None = None
+    code_practice_report: CodePracticeReport | None = None
+    code_tool_trace: list[ToolTraceEntry] = Field(default_factory=list)
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
     explanation: str | None = None
@@ -454,6 +461,16 @@ class LearningSessionService:
 
     @staticmethod
     def _view(session_id: str, state: dict[str, Any]) -> SessionView:
+        exercise = (
+            CodeExercise.model_validate(state["code_exercise"])
+            if state.get("code_exercise")
+            else None
+        )
+        public_exercise = (
+            CodeExerciseView.from_exercise(exercise)
+            if exercise is not None
+            else None
+        )
         interrupts = state.get("__interrupt__", ())
         if interrupts:
             payload = interrupts[0].value
@@ -474,6 +491,9 @@ class LearningSessionService:
                 retrieval_report=state.get("retrieval_report"),
                 graph_report=state.get("graph_report"),
                 question=str(payload.get("question", "")),
+                code_exercise=public_exercise,
+                code_practice_report=state.get("code_practice_report"),
+                code_tool_trace=state.get("code_tool_trace", []),
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
                 explanation=state.get("explanation"),
@@ -498,6 +518,9 @@ class LearningSessionService:
             ingestion_report=state.get("ingestion_report"),
             retrieval_report=state.get("retrieval_report"),
             graph_report=state.get("graph_report"),
+            code_exercise=public_exercise,
+            code_practice_report=state.get("code_practice_report"),
+            code_tool_trace=state.get("code_tool_trace", []),
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),

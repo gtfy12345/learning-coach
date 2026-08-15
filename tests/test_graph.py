@@ -282,3 +282,71 @@ def test_graph_streams_task_status_text_and_sources_before_final_state() -> None
     assert next(
         part["interrupts"] for part in parts if part.get("interrupts")
     )[0].value["kind"] == "quiz"
+
+
+def test_graph_runs_code_practice_and_keeps_hidden_tests_server_side() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "code-practice-session"}}
+
+    result = graph.invoke(
+        {"topic": "Python 函数", "attempts": 0}, config=config
+    )
+    result = graph.invoke(
+        Command(resume="函数把输入映射为输出。"), config=config
+    )
+
+    payload = result["__interrupt__"][0].value
+    assert payload["kind"] == "quiz"
+    assert payload["code_exercise"]["entrypoint"] == "clamp_score"
+    assert "tests" not in payload["code_exercise"]
+    assert result["code_exercise"]["tests"]
+
+    result = graph.invoke(
+        Command(
+            resume=(
+                "def clamp_score(score):\n"
+                "    return min(100, max(0, score))\n"
+            )
+        ),
+        config=config,
+    )
+
+    assert result["score"] == 100
+    assert result["code_practice_report"]["status"] == "passed"
+    assert result["code_practice_report"]["passed_tests"] == 4
+    assert result["code_tool_trace"][0]["tool_name"] == "run_code_tests"
+
+
+def test_non_code_graph_keeps_model_generated_quiz_and_assessment() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "text-practice-compatible"}}
+
+    graph.invoke({"topic": "概念图关系", "attempts": 0}, config=config)
+    result = graph.invoke(Command(resume="前置边有方向。"), config=config)
+
+    assert "operator.add" in result["quiz_question"]
+    assert "code_exercise" not in result
+
+    final = graph.invoke(Command(resume="使用有向边。"), config=config)
+    assert final["score"] == 86
+    assert "code_practice_report" not in final
+
+
+def test_zero_tool_budget_keeps_python_topic_on_text_quiz_path() -> None:
+    tasks = LearningCoachRunnables(
+        diagnostic=RunnableLambda(lambda values: None),
+        teaching=RunnableLambda(lambda values: None),
+        quiz=RunnableLambda(lambda values: "解释函数的输入输出关系。"),
+        assessment=RunnableLambda(lambda values: None),
+        summary=RunnableLambda(lambda values: "summary"),
+    )
+    nodes = LearningCoachNodes(tasks)
+
+    result = nodes.make_quiz(
+        {"topic": "Python 函数", "explanation": "函数说明"},
+        runtime=LearningRuntimeContext(
+            learning_goal="理解 Python 函数", tool_call_limit=0
+        ),
+    )
+
+    assert result == {"quiz_question": "解释函数的输入输出关系。"}
