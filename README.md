@@ -60,6 +60,10 @@ flowchart LR
 - 多 Agent 教学子图：Router 制定有界计划，`Send` 按焦点与维度动态 fan-out 研究/审查 Agent
 - 子图作为 `teach` 节点接入，事件只回传增量；`AgentHandoff` 记录证据、草稿与审查意见的有界交接
 - 审查未通过时最多修订一次，预算耗尽后带意见接受，子图必然终止
+- SQLite 检查点持久化（`CHECKPOINT_DB_PATH`）与 `--thread-id` 跨进程恢复未完成会话
+- Store 长期记忆：幂等会话键 + 聚合画像召回注入确定性摘要
+- 代码执行审批中断：拒绝时零执行、零进程输出，闭环照常继续
+- Time Travel：脱敏里程碑列表、快照分叉（原线程不变）与安全状态比较
 - 可与讲解并行的确定性练习准备节点和 fan-in 练习生成
 - 节点级 `RetryPolicy`：瞬态模型错误最多重试一次，配置与校验错误快速失败
 - 节点级 `CachePolicy`：相同主题与题图复用诊断结果，可用 `GRAPH_NODE_CACHE` 关闭
@@ -166,6 +170,9 @@ PYTHONPATH=src python -m learning_coach web
 - 显示当前掌握度、学习摘要以及本轮模型/工具预算使用情况
 - 显示本轮练习类型与并行执行轨迹（标注并行顺序不保证）
 - 显示教学编排计划、研究焦点数、审查通过与 Agent 交接次数
+- 代码提交后的执行审批卡片（批准/拒绝，批准前不启动进程）
+- 时间旅行面板：会话里程碑列表、从等待输入的检查点分叉新会话并显示基线对比
+- 显示学习者长期记忆（会话次数、平均分、上次主题）
 
 当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
 
@@ -420,6 +427,31 @@ flowchart LR
 
 只有教师 Agent 调用模型，且复用原有 `teach_stream`（保留中间件、备用链与流式行为）；研究 Agent 使用现有 Hybrid/Graph 检索器，审查 Agent 是三个确定性规则（证据术语重叠、草稿长度边界、缺口术语回应），不新增模型调用、Provider 或环境变量。审查未通过时意见并入教学反馈触发一次修订；修订后仍未通过则带意见接受，子图必然终止。Web 会话 JSON 与页面展示教学计划、研究摘要、审查结论和交接次数。
 
+### 记忆、暂停恢复与 Time Travel
+
+第 11 阶段为闭环补上时间维度：任务可跨进程恢复、学习者画像跨会话沉淀、敏感动作可审批、旧状态可以分叉比较。
+
+```mermaid
+flowchart LR
+    R[recall_memory · 召回画像] --> A[make_diagnostic]
+    A --> C1[诊断 interrupt] --> T[讲解 Swarm] --> Q[make_quiz] --> C2[练习 interrupt]
+    C2 --> AP{审批 interrupt<br/>仅代码练习}
+    AP --> G[assess] -->|达标或用完次数| S[summarize] --> M[remember_session · 写入画像] --> E[END]
+    H[get_state_history] --> L[里程碑列表] --> F[fork_session 分叉到新线程]
+```
+
+- **Checkpoint / Durable**：默认仍是进程内 `InMemorySaver`；配置 `CHECKPOINT_DB_PATH` 后切换为 SQLite 保存器，CLI 用 `--thread-id` 在新进程里从 pending 中断继续会话（`invoke(None)` 恢复未完成任务）。
+- **Store / 长期记忆**：会话开始 `recall_memory` 读取 `("learner_memory", learner_id)` 命名空间的聚合画像（次数、主题、平均分、上次缺口），注入确定性 `context_summary` 的"长期记忆"行；会话结束 `remember_session` 以 `session:{thread_id}` 为幂等键写入结果并重算画像——崩溃重放覆盖同一键，不会重复累计。默认内存 Store，`MEMORY_DB_PATH` 指向 SQLite 文件后跨重启保留。
+- **Interrupt / 审批**：本地运行学习者代码是全系统唯一执行不可信输入的动作。代码提交后先停在 `approve_execution` 审批中断，payload 带入口函数与测试数量；批准后才进入受限执行器，拒绝则构造零执行 `rejected` 报告（不启动任何进程）并继续补救或总结。默认开启，`CODE_EXECUTION_APPROVAL=false` 关闭。
+- **Time Travel**：`GET /api/sessions/{id}/history` 返回脱敏里程碑（节点、标签、分数、可否分叉）；`POST /api/sessions/{id}/fork` 把快照 values 复制到新线程并重新进入该中断点——原会话状态不变，新分支可以换一种回答重走，响应附基线与当前状态的安全差异比较。
+
+```bash
+# 耐久运行：中断后在新进程中继续同一会话
+CHECKPOINT_DB_PATH=data/checkpoints.sqlite \
+PYTHONPATH=src python -m learning_coach "LangGraph 记忆" \
+  --thread-id my-session --learner ray
+```
+
 也可以把模型切换到 Google Gemini：
 
 ```dotenv
@@ -604,6 +636,7 @@ learning-coach/
 │       ├── knowledge_graph.py
 │       ├── loaders.py
 │       ├── media.py
+│       ├── memory.py
 │       ├── middleware.py
 │       ├── model.py
 │       ├── nodes.py
@@ -629,6 +662,7 @@ learning-coach/
     ├── test_knowledge_graph.py
     ├── test_loaders.py
     ├── test_media.py
+    ├── test_memory.py
     ├── test_middleware.py
     ├── test_model.py
     ├── test_retrieval.py
@@ -653,6 +687,7 @@ learning-coach/
 - `graph.py`：节点之间的固定边、Command 导航、并行 fan-out 和节点级 Retry/Cache 挂接。
 - `resilience.py`：瞬态错误分类、默认节点重试策略、诊断缓存键与缓存开关。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
+- `memory.py`：检查点/记忆构造器、画像召回与幂等写入、里程碑列表、快照分叉与状态比较。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
 - `auth.py`：把登录、状态和退出操作委托给官方 CLI。
 - `cli_models.py`：把 Codex、Claude Code 和 Gemini CLI 适配成现有节点可调用的模型对象。

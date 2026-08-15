@@ -183,11 +183,20 @@ def test_web_code_practice_runs_tests_without_exposing_hidden_cases() -> None:
     assert taught["code_exercise"]["total_test_count"] == 4
     assert taught["code_exercise"]["visible_test_count"] == 2
 
-    completed = client.post(
+    submitted = client.post(
         f"/api/sessions/{started['session_id']}/answers",
         json={
             "answer": "def clamp_score(score):\n    return min(100, max(0, score))"
         },
+    ).json()
+
+    assert submitted["status"] == "waiting"
+    assert submitted["stage"] == "approval"
+    assert "批准" in submitted["question"]
+
+    completed = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "approve"},
     ).json()
 
     assert completed["status"] == "completed"
@@ -710,3 +719,69 @@ def test_cancelled_stream_does_not_register_an_incomplete_session() -> None:
 
     asyncio.run(cancel_run())
     assert service._sessions == set()
+
+
+def test_web_history_and_fork_endpoints_support_time_travel() -> None:
+    client, _ = make_client()
+
+    started = client.post(
+        "/api/sessions", data={"topic": "LangGraph 分叉"}
+    ).json()
+    client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "检查点按步保存。"},
+    )
+
+    history = client.get(f"/api/sessions/{started['session_id']}/history")
+    assert history.status_code == 200
+    milestones = history.json()
+    assert any(item["node"] == "collect_quiz" for item in milestones)
+    assert all("explanation" not in item and "quiz_answer" not in item for item in milestones)
+
+    quiz_checkpoint = next(
+        item
+        for item in milestones
+        if item["node"] == "collect_quiz" and item["forkable"]
+    )
+    forked = client.post(
+        f"/api/sessions/{started['session_id']}/fork",
+        json={"checkpoint_id": quiz_checkpoint["checkpoint_id"]},
+    )
+    assert forked.status_code == 200
+    payload = forked.json()
+    assert payload["forked_from"] == started["session_id"]
+    assert payload["entry_node"] == "collect_quiz"
+    assert payload["session"]["status"] == "waiting"
+    assert payload["session"]["stage"] == "quiz"
+
+    missing = client.post(
+        f"/api/sessions/{started['session_id']}/fork",
+        json={"checkpoint_id": "missing"},
+    )
+    assert missing.status_code == 404
+
+
+def test_web_long_term_memory_persists_across_sessions() -> None:
+    client, _ = make_client()
+
+    first = client.post(
+        "/api/sessions",
+        data={"topic": "LangGraph 记忆", "learner_id": "ray"},
+    ).json()
+    assert first["learner_id"] == "ray"
+    assert first["long_term_memory"] is None
+    client.post(
+        f"/api/sessions/{first['session_id']}/answers",
+        json={"answer": "检查点保存每一步。"},
+    )
+    client.post(
+        f"/api/sessions/{first['session_id']}/answers",
+        json={"answer": "thread_id 恢复会话。"},
+    )
+
+    second = client.post(
+        "/api/sessions",
+        data={"topic": "LangGraph 记忆进阶", "learner_id": "ray"},
+    ).json()
+    assert second["long_term_memory"]["sessions"] == 1
+    assert second["long_term_memory"]["last_topic"] == "LangGraph 记忆"

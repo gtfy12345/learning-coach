@@ -19,6 +19,7 @@ from learning_coach.ingestion import (
 )
 from learning_coach.loaders import default_loader_registry
 from learning_coach.media import image_content_block
+from learning_coach.memory import create_checkpointer, create_memory_store
 from learning_coach.model import create_model_suite
 
 
@@ -38,6 +39,9 @@ def _ask_for_answer(payload: Any) -> str:
         question = payload
 
     print(f"\n[{kind}] {question}")
+    if kind == "approval":
+        answer = input("批准执行？输入 approve 批准，其他任意输入拒绝：").strip()
+        return answer or "reject"
     answer = input("你的回答：").strip()
     if not answer:
         print("回答为空也会继续，但评价结果可能没有参考价值。")
@@ -48,11 +52,17 @@ def run(
     topic: str,
     *,
     thread_id: str | None = None,
+    learner_id: str = "local-learner",
     image_sources: Sequence[str] = (),
     material_sources: Sequence[str] = (),
     learning_goal: str | None = None,
 ) -> dict[str, Any]:
-    """Run one learning session until the graph finishes."""
+    """Run one learning session until the graph finishes.
+
+    With a durable ``CHECKPOINT_DB_PATH`` configured, passing the same
+    ``thread_id`` resumes an interrupted session in a new process instead of
+    starting over.
+    """
 
     models = create_model_suite()
     images = [image_content_block(source) for source in image_sources]
@@ -72,7 +82,11 @@ def run(
             )
         ).ingest(materials)
 
-    graph = build_learning_graph(models)
+    graph = build_learning_graph(
+        models,
+        checkpointer=create_checkpointer(os.environ),
+        store=create_memory_store(os.environ),
+    )
     runtime_context = create_learning_runtime_context(
         topic,
         learning_goal=learning_goal,
@@ -81,9 +95,12 @@ def run(
     config = {
         "configurable": {"thread_id": thread_id or f"learning-{uuid.uuid4().hex}"}
     }
+    existing = graph.get_state(config)
+    resuming = bool(existing.values or existing.tasks)
     initial_state: dict[str, Any] = {
         "topic": topic,
         "learning_goal": runtime_context.learning_goal,
+        "learner_id": learner_id,
         "mastery_level": 0,
         "recent_errors": [],
         "attempts": 0,
@@ -95,9 +112,13 @@ def run(
             chunk.model_dump() for chunk in ingestion.chunks
         ]
         initial_state["ingestion_report"] = ingestion.report.model_dump()
-    result = graph.invoke(
-        initial_state, config=config, context=runtime_context
-    )
+    if resuming:
+        print("检测到未完成的持久会话，从检查点继续。")
+        result = graph.invoke(None, config=config, context=runtime_context)
+    else:
+        result = graph.invoke(
+            initial_state, config=config, context=runtime_context
+        )
 
     while result.get("__interrupt__"):
         pending = result["__interrupt__"][0]
@@ -184,11 +205,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--goal",
         help="本次学习目标；未填写时默认为掌握当前主题",
     )
+    parser.add_argument(
+        "--thread-id",
+        help="会话线程 ID；配置 CHECKPOINT_DB_PATH 后可用同一 ID 跨进程恢复",
+    )
+    parser.add_argument(
+        "--learner",
+        default="local-learner",
+        help="学习者标识，用于跨会话长期记忆；默认 local-learner",
+    )
     args = parser.parse_args(arguments)
 
     try:
         run(
             _read_topic(args.topic),
+            thread_id=args.thread_id,
+            learner_id=args.learner,
             image_sources=args.image,
             material_sources=args.material,
             learning_goal=args.goal,

@@ -72,6 +72,20 @@
               />
             </label>
 
+            <label class="material-box" for="learner-id">
+              <span>
+                <strong>学习者标识</strong>
+                <small>可选 · 相同标识跨会话累计长期记忆与平均分</small>
+              </span>
+              <input
+                id="learner-id"
+                name="learner_id"
+                type="text"
+                maxlength="100"
+                placeholder="默认 local-learner"
+              />
+            </label>
+
             <label class="upload-box" for="image">
               <span class="upload-icon" aria-hidden="true">＋</span>
               <span>
@@ -178,6 +192,17 @@
           </section>
 
           <form id="answer-form" class="answer-card">
+            <div id="approval-actions" class="answer-actions" hidden>
+              <small>敏感动作审批 · 批准前不会启动任何进程</small>
+              <div class="run-actions">
+                <button class="primary-button" id="approve-button" type="button">
+                  <span>批准执行</span><span aria-hidden="true">✓</span>
+                </button>
+                <button class="text-button" id="reject-button" type="button">
+                  <span>拒绝执行</span><span aria-hidden="true">✕</span>
+                </button>
+              </div>
+            </div>
             <label for="answer">你的回答</label>
             <textarea
               id="answer"
@@ -241,7 +266,13 @@
           <span id="context-budget">预算将在讲解后显示</span>
           <span id="context-ingestion">尚未摄取学习资料</span>
           <span id="context-retrieval">检索将在讲解时运行</span>
-          <span id="context-events">并行执行轨迹将在诊断回答后显示</span>
+          <span id="context-events">Agent 并行轨迹将在诊断回答后显示</span>
+          <span id="context-memory">长期记忆将在会话开始后显示</span>
+        </div>
+        <div class="context-insight" id="time-travel" hidden>
+          <strong>时间旅行</strong>
+          <span id="fork-banner" hidden></span>
+          <div id="milestone-list"></div>
         </div>
       </aside>
     </main>

@@ -14,3 +14,4 @@ EbookLib>=0.19,<1.0
 beautifulsoup4>=4.13,<5.0
 Pillow>=11.0,<13.0
 langchain-text-splitters>=1.0,<2.0
+langgraph-checkpoint-sqlite>=2.0,<4.0

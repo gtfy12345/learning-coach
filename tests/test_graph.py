@@ -373,10 +373,53 @@ def test_graph_runs_code_practice_and_keeps_hidden_tests_server_side() -> None:
         config=config,
     )
 
+    approval = result["__interrupt__"][0].value
+    assert approval["kind"] == "approval"
+    assert approval["entrypoint"] == "clamp_score"
+    assert approval["total_test_count"] == 4
+
+    result = graph.invoke(Command(resume="approve"), config=config)
+
     assert result["score"] == 100
+    assert result["execution_approved"] is True
     assert result["code_practice_report"]["status"] == "passed"
     assert result["code_practice_report"]["passed_tests"] == 4
     assert result["code_tool_trace"][0]["tool_name"] == "run_code_tests"
+
+
+def test_graph_rejected_execution_skips_runner_and_keeps_loop() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "rejected-execution-session"}}
+
+    graph.invoke({"topic": "Python 函数", "attempts": 0}, config=config)
+    graph.invoke(Command(resume="函数把输入映射为输出。"), config=config)
+    result = graph.invoke(
+        Command(
+            resume=(
+                "def clamp_score(score):\n"
+                "    return min(100, max(0, score))\n"
+            )
+        ),
+        config=config,
+    )
+    assert result["__interrupt__"][0].value["kind"] == "approval"
+
+    result = graph.invoke(Command(resume="reject"), config=config)
+
+    assert result["execution_approved"] is False
+    assert result["score"] == 0
+    report = result["code_practice_report"]
+    assert report["status"] == "rejected"
+    assert report["passed_tests"] == 0
+    assert report["total_tests"] == 4
+    approval_events = [
+        event
+        for event in result["learning_events"]
+        if event["node"] == "approve_execution"
+    ]
+    assert approval_events[-1]["detail"].startswith("已拒绝")
+    assert result["attempts"] == 1
+    assert result["__interrupt__"][0].value["kind"] == "quiz"
 
 
 def test_non_code_graph_keeps_model_generated_quiz_and_assessment() -> None:

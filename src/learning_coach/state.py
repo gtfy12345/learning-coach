@@ -49,6 +49,9 @@ class LearningState(TypedDict, total=False):
 
     topic: str
     learning_goal: str
+    learner_id: str
+    long_term_memory: dict[str, Any]
+    execution_approved: bool
     mastery_level: int
     recent_errors: Annotated[list[str], merge_recent_errors]
     learning_events: Annotated[

@@ -1,0 +1,48 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: memory-time-travel
+  branch: codex/memory-time-travel-0815
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 记忆、暂停恢复与 Time Travel
+      - 检查点与长期记忆
+      - 审批与分叉比较
+    keywords:
+      - Checkpoint
+      - SqliteSaver
+      - Store
+      - Interrupt 审批
+      - Durable
+      - 幂等
+      - 长期记忆
+      - Time Travel
+      - fork
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/memory-time-travel-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/memory.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/state.py
+          - src/learning_coach/cli.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+        apiNames:
+          - create_checkpointer
+          - create_memory_store
+          - execution_approval_enabled
+          - recall_memory_node
+          - remember_session_node
+          - list_session_checkpoints
+          - fork_session
+          - compare_learning_states
