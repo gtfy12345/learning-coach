@@ -1,0 +1,45 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: multi-agent-orchestration
+  branch: codex/multi-agent-orchestration-0815
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 多 Agent 与任务编排
+      - 教学 Swarm 编排
+      - Agent 分工与交接
+    keywords:
+      - Router
+      - Send
+      - Orchestrator-Worker
+      - Subgraph
+      - Handoff
+      - TeachingPlan
+      - AgentHandoff
+      - review worker
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/multi-agent-orchestration-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/agents.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/state.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+        apiNames:
+          - build_teaching_plan
+          - build_teaching_swarm
+          - review_teaching_draft
+          - TeachingPlan
+          - AgentHandoff
+          - ResearchEvidence
