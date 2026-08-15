@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [LangGraph 状态图进阶](./langgraph-advanced-state/) | [implementation](./langgraph-advanced-state/implementation.md) / [checklist](./langgraph-advanced-state/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./langgraph-advanced-state/unit-test-plan.md) / [checklist](./langgraph-advanced-state/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |

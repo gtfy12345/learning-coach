@@ -8,6 +8,7 @@
 
 | 文档 | 版本 | 状态 | 更新日期 |
 |------|------|------|----------|
+| [LangGraph 状态图进阶](./langgraph-advanced-state-design.md) | 1.0 | active | 2026-08-15 |
 | [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice-design.md) | 1.0 | completed | 2026-08-15 |
 | [GraphRAG 与知识前置图](./graphrag-prerequisite-graph-design.md) | 1.0 | completed | 2026-08-15 |
 | [自校正 Hybrid RAG](./self-corrective-hybrid-rag-design.md) | 1.0 | completed | 2026-08-14 |
