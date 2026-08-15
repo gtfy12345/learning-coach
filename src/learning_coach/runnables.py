@@ -161,6 +161,9 @@ def _retrieve_teaching_evidence(
     values: TaskInput,
     retriever: HybridStudyRetriever | GraphStudyRetriever,
 ) -> HybridRetrievalResult | None:
+    prepared = values.get("prepared_retrieval")
+    if isinstance(prepared, HybridRetrievalResult):
+        return prepared
     if not values.get("study_material") and not values.get("study_chunks"):
         return None
     return retrieve_study_sources_with_report(

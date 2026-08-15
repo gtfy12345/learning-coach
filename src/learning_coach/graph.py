@@ -6,6 +6,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import CachePolicy, RetryPolicy
 
+from learning_coach.agents import build_teaching_swarm, resolve_teaching_retriever
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.resilience import (
@@ -26,10 +27,11 @@ def build_learning_graph(
 ) -> Any:
     """Build the parallel learning workflow around the supplied model.
 
-    ``teach`` (model-backed) and ``prepare_practice`` (deterministic) run in
-    parallel after the diagnostic answer and merge at ``make_quiz``. Model
-    nodes retry transient provider errors; the pure ``make_diagnostic`` node
-    additionally caches its update per topic and diagnostic images.
+    ``teach`` is a bounded multi-agent swarm subgraph (orchestrator, research
+    workers, teacher, review workers) running in parallel with the
+    deterministic ``prepare_practice`` agent. Model nodes retry transient
+    provider errors; the pure ``make_diagnostic`` node additionally caches its
+    update per topic and diagnostic images.
     """
 
     nodes = LearningCoachNodes(model)
@@ -51,6 +53,9 @@ def build_learning_graph(
         if graph_cache is not None
         else None
     )
+    teaching_swarm = build_teaching_swarm(
+        nodes.runnables, retriever=resolve_teaching_retriever(nodes.runnables)
+    )
 
     builder = StateGraph(
         LearningState, context_schema=LearningRuntimeContext
@@ -67,7 +72,7 @@ def build_learning_graph(
         nodes.collect_diagnostic,
         destinations=("teach", "prepare_practice"),
     )
-    builder.add_node("teach", nodes.teach, retry_policy=retry)
+    builder.add_node("teach", teaching_swarm, retry_policy=retry)
     builder.add_node("prepare_practice", nodes.prepare_practice)
     builder.add_node("make_quiz", nodes.make_quiz, retry_policy=retry)
     builder.add_node("collect_quiz", nodes.collect_quiz)
