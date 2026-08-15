@@ -163,6 +163,11 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert final["score"] == 86
     assert final["mastery_level"] == 86
     assert "下一步" in final["summary"]
+    report = final["stage_report"]
+    assert report["trajectory"]["passed"] is True
+    assert report["telemetry"]["attempts"] == 1
+    assert report["mastery"]["concepts"]
+    assert "最终得分 86/100" in report["summary"]
 
 
 def test_web_code_practice_runs_tests_without_exposing_hidden_cases() -> None:

@@ -176,6 +176,8 @@ def _retrieve_teaching_evidence(
 
 
 def _format_study_context(values: TaskInput) -> str:
+    from learning_coach.security import hardened_study_context
+
     retrieval = values.get("retrieval")
     sources = retrieval.sources if isinstance(retrieval, HybridRetrievalResult) else []
     if not sources:
@@ -191,13 +193,13 @@ def _format_study_context(values: TaskInput) -> str:
     )
     graph_report = retrieval.graph_report
     if graph_report is None or not graph_report.prerequisites:
-        return source_context
+        return hardened_study_context(source_context)
     prerequisites = "\n".join(
         f"- {item.reason}"
         f"{f' 证据位置：{'；'.join(item.evidence_locations)}' if item.evidence_locations else ''}"
         for item in graph_report.prerequisites
     )
-    return (
+    return hardened_study_context(
         f"{source_context}\n\n前置知识建议（只根据资料路径解释，不推断掌握状态）：\n"
         f"{prerequisites}"
     )

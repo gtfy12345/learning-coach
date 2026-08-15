@@ -54,9 +54,14 @@ from learning_coach.schemas import (
     ResearchEvidence,
     RetrievalReport,
     ReviewFinding,
+    StageReport,
     StudySource,
     TeachingPlan,
     ToolTraceEntry,
+)
+from learning_coach.security import (
+    inspect_content_safety,
+    safety_findings_updates,
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -152,6 +157,8 @@ class SessionView(BaseModel):
     research_evidence: ResearchEvidence | None = None
     teaching_reviews: list[ReviewFinding] = Field(default_factory=list)
     agent_handoffs: list[AgentHandoff] = Field(default_factory=list)
+    safety_findings: list[dict[str, Any]] = Field(default_factory=list)
+    stage_report: StageReport | None = None
     execution_approved: bool | None = None
     score: int | None = None
     feedback: str | None = None
@@ -320,6 +327,12 @@ class LearningSessionService:
         normalized_material = normalize_study_material(study_material)
         if normalized_material:
             initial_state["study_material"] = normalized_material
+            material_safety = inspect_content_safety(
+                normalized_material, source="study_material"
+            )
+            initial_state["safety_findings"] = safety_findings_updates(
+                material_safety
+            )
         if materials:
             ingestion_materials = list(materials)
             if normalized_material:
@@ -609,6 +622,8 @@ class LearningSessionService:
                 research_evidence=state.get("research_evidence"),
                 teaching_reviews=state.get("teaching_reviews", []),
                 agent_handoffs=state.get("agent_handoffs", []),
+                safety_findings=state.get("safety_findings", []),
+                stage_report=state.get("stage_report"),
                 execution_approved=state.get("execution_approved"),
                 score=state.get("score"),
                 feedback=state.get("feedback"),
@@ -645,6 +660,8 @@ class LearningSessionService:
             research_evidence=state.get("research_evidence"),
             teaching_reviews=state.get("teaching_reviews", []),
             agent_handoffs=state.get("agent_handoffs", []),
+            safety_findings=state.get("safety_findings", []),
+            stage_report=state.get("stage_report"),
             execution_approved=state.get("execution_approved"),
             score=state.get("score"),
             feedback=state.get("feedback"),

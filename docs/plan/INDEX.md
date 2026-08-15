@@ -13,6 +13,8 @@
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [评价、安全与完整交付](./evaluation-security-delivery/) | [implementation](./evaluation-security-delivery/implementation.md) / [checklist](./evaluation-security-delivery/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery/unit-test-plan.md) / [checklist](./evaluation-security-delivery/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [记忆、暂停恢复与 Time Travel](./memory-time-travel/) | [implementation](./memory-time-travel/implementation.md) / [checklist](./memory-time-travel/implementation-checklist.md) | 1.0 | 2026-08-15 |
 | ↳ 单元测试 | [test-plan](./memory-time-travel/unit-test-plan.md) / [checklist](./memory-time-travel/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [多 Agent 与任务编排](./multi-agent-orchestration/) | [implementation](./multi-agent-orchestration/implementation.md) / [checklist](./multi-agent-orchestration/implementation-checklist.md) | 1.0 | 2026-08-15 |
