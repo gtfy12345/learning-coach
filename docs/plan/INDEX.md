@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [记忆、暂停恢复与 Time Travel](./memory-time-travel/) | [implementation](./memory-time-travel/implementation.md) / [checklist](./memory-time-travel/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./memory-time-travel/unit-test-plan.md) / [checklist](./memory-time-travel/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
