@@ -1,7 +1,7 @@
 # 记忆、暂停恢复与 Time Travel 单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-15
 
 **关联测试计划**: [unit-test-plan.md](./unit-test-plan.md)

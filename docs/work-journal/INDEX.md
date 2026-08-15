@@ -8,6 +8,8 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-15](2026-08-15.md) | `feat(memory): 完成记忆与时间旅行交付` | #feat #docs |
+| [2026-08-15](2026-08-15.md) | `feat(memory): 检查点记忆审批与时间旅行接入` | #feat |
 | [2026-08-15](2026-08-15.md) | `feat(multi-agent): 完成多 Agent 编排交付` | #feat #docs |
 | [2026-08-15](2026-08-15.md) | `feat(multi-agent): 教学 swarm 编排与主图接入` | #feat |
 | [2026-08-15](2026-08-15.md) | `docs(multi-agent): 定义多 Agent 编排交付计划` | #docs |

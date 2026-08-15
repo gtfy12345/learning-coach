@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-15](./2026-08-15-memory-time-travel-assessment.md) | 记忆、暂停恢复与 Time Travel 交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-multi-agent-orchestration-assessment.md) | 多 Agent 与任务编排交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-langgraph-advanced-state-assessment.md) | LangGraph 状态图进阶交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-tool-calling-react-code-practice-assessment.md) | Tool Calling、ReAct 与代码实践交付复盘 | #assessment |
