@@ -1,0 +1,52 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: evaluation-security-delivery
+  branch: codex/evaluation-security-delivery-0815
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 评价、安全与完整交付
+      - 评估集与掌握图谱
+      - PII 与 Prompt 注入防护
+    keywords:
+      - RAG 评价
+      - 轨迹评价
+      - PII
+      - Prompt 注入
+      - 可观测性
+      - 掌握图谱
+      - 阶段报告
+      - 评估集
+      - hit@3
+      - MRR
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/evaluation-security-delivery-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/security.py
+          - src/learning_coach/evaluation.py
+          - src/learning_coach/runnables.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/cli.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+        apiNames:
+          - find_pii
+          - find_injection
+          - inspect_content_safety
+          - redact_pii
+          - hardened_study_context
+          - evaluate_retrieval
+          - evaluate_trajectory
+          - build_mastery_map
+          - build_stage_report
+          - EVALUATION_CASES

@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [评价、安全与完整交付](./evaluation-security-delivery/) | [implementation](./evaluation-security-delivery/implementation.md) / [checklist](./evaluation-security-delivery/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery/unit-test-plan.md) / [checklist](./evaluation-security-delivery/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |

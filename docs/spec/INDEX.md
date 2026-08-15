@@ -8,6 +8,7 @@
 
 | 文档 | 版本 | 状态 | 更新日期 |
 |------|------|------|----------|
+| [评价、安全与完整交付](./evaluation-security-delivery-design.md) | 1.0 | active | 2026-08-15 |
 | [记忆、暂停恢复与 Time Travel](./memory-time-travel-design.md) | 1.0 | completed | 2026-08-15 |
 | [多 Agent 与任务编排](./multi-agent-orchestration-design.md) | 1.0 | completed | 2026-08-15 |
 | [LangGraph 状态图进阶](./langgraph-advanced-state-design.md) | 1.0 | completed | 2026-08-15 |
