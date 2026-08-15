@@ -139,6 +139,16 @@ class ToolTraceEntry(BaseModel):
     observation: str = Field(min_length=1, max_length=300)
 
 
+class LearningEvent(BaseModel):
+    """One parallel-branch trace entry merged by a State reducer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node: Literal["teach", "prepare_practice", "assess"]
+    status: Literal["completed"] = "completed"
+    detail: str = Field(default="", max_length=200)
+
+
 class CodePracticeReport(BaseModel):
     """Deterministic execution, grading and hint report."""
 

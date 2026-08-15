@@ -1,0 +1,44 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: langgraph-advanced-state
+  branch: codex/langgraph-advanced-state-0815
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - LangGraph 状态图进阶
+      - Reducer 与 Command
+      - 并行与重试稳定运行
+    keywords:
+      - Reducer
+      - Command
+      - 并行 fan-out
+      - RetryPolicy
+      - CachePolicy
+      - 循环终止
+      - GRAPH_NODE_CACHE
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/langgraph-advanced-state-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      discovery:
+        packages:
+          - src/learning_coach/state.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/resilience.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+        apiNames:
+          - merge_recent_errors
+          - append_learning_events
+          - prepare_practice
+          - build_learning_graph
+          - default_model_retry_policy
+          - diagnostic_cache_key
+          - node_cache_enabled

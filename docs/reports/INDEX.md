@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-15](./2026-08-15-langgraph-advanced-state-assessment.md) | LangGraph 状态图进阶交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-tool-calling-react-code-practice-assessment.md) | Tool Calling、ReAct 与代码实践交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-graphrag-prerequisite-graph-assessment.md) | GraphRAG 与知识前置图交付复盘 | #assessment |
 | [2026-08-14](./2026-08-14-self-corrective-hybrid-rag-assessment.md) | 自校正 Hybrid RAG 交付复盘 | #assessment |

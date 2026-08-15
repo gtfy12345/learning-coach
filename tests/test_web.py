@@ -134,6 +134,11 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert "route_after_assessment" in second["question"]
     assert second["context_report"]["mode"] == "lcel"
     assert second["context_report"]["model_call_limit"] == 3
+    assert second["practice_kind"] == "text"
+    assert {event["node"] for event in second["learning_events"]} == {
+        "teach",
+        "prepare_practice",
+    }
 
     quiz = client.post(
         f"/api/sessions/{first['session_id']}/answers",
@@ -160,6 +165,7 @@ def test_web_code_practice_runs_tests_without_exposing_hidden_cases() -> None:
     ).json()
 
     assert taught["stage"] == "quiz"
+    assert taught["practice_kind"] == "code"
     assert taught["code_exercise"]["entrypoint"] == "clamp_score"
     assert "tests" not in taught["code_exercise"]
     assert taught["code_exercise"]["total_test_count"] == 4

@@ -6,15 +6,17 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取、自校正 Hybrid RAG、GraphRAG 知识前置图与代码实践扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取、自校正 Hybrid RAG、GraphRAG 知识前置图、代码实践与状态图进阶扩展：
 
 ```mermaid
 flowchart LR
     A[输入学习主题] --> B[生成诊断题]
     B --> C[等待诊断回答]
-    C --> D[针对薄弱点讲解]
-    D --> E[生成练习题]
-    E --> F[等待练习回答]
+    C -->|Command fan-out| D[针对薄弱点讲解]
+    C -->|并行| P[准备练习类型与代码练习]
+    D --> Q[生成练习题]
+    P --> Q
+    Q --> F[等待练习回答]
     F --> G[结构化评价]
     G -->|未达到阈值且仍可尝试| D
     G -->|达到阈值或用完机会| H[生成学习小结]
@@ -53,6 +55,11 @@ flowchart LR
 - 来源 `source_id`、原文 `content_hash` 与 `chunk_hash` 三层 SHA-256
 - 支持新增、更新、未变化跳过和 full cleanup 的会话级内存增量索引
 - LangGraph State、Node、Edge 和 Conditional Edge
+- Reducer 显式合并并行分支状态：错误增量去重合并与最多 30 条的并行事件轨迹
+- `Command` 导航：诊断回答后双分支并行 fan-out，评价后按阈值条件跳转
+- 可与讲解并行的确定性练习准备节点和 fan-in 练习生成
+- 节点级 `RetryPolicy`：瞬态模型错误最多重试一次，配置与校验错误快速失败
+- 节点级 `CachePolicy`：相同主题与题图复用诊断结果，可用 `GRAPH_NODE_CACHE` 关闭
 - 可终止的补救循环
 - `interrupt()` 人工输入
 - InMemory Checkpointer 与 `thread_id`
@@ -154,6 +161,7 @@ PYTHONPATH=src python -m learning_coach web
 - 通过 SSE 增量展示讲解、练习和小结，并可停止当前生成
 - 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
 - 显示当前掌握度、学习摘要以及本轮模型/工具预算使用情况
+- 显示本轮练习类型与并行执行轨迹（标注并行顺序不保证）
 
 当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
 
@@ -353,6 +361,34 @@ flowchart LR
 
 安全边界：这个执行器适用于本地、单用户的教学演示，通过多层限制降低误操作风险，但它不是强隔离沙箱，不能安全承载恶意代码或多租户公网判题。生产环境应替换为容器、微虚拟机或专用隔离执行服务；项目也不会执行用户上传到学习资料中的代码。
 
+### LangGraph 状态图进阶
+
+第 9 阶段让同一条学习闭环在并行与失败场景下稳定运行。诊断回答收集完成后，`collect_diagnostic` 返回 `Command(goto=["teach", "prepare_practice"])`：讲解（模型调用）和练习准备（确定性离线操作）在同一 superstep 并行执行，再在练习生成节点汇合。补救重试也重入同一个并行入口，终止条件保持"分数达到目标掌握度或最多评价两次"不变。
+
+```mermaid
+flowchart LR
+    C[collect_diagnostic] -->|Command fan-out| T[teach · Retry]
+    C -->|Command fan-out| P[prepare_practice · 确定性]
+    T -->|learning_events Reducer 合并| Q[make_quiz fan-in]
+    P --> Q
+    Q --> W[collect_quiz interrupt]
+    W --> G[assess · Retry]
+    G -->|Command 未达标且可尝试| T
+    G -->|Command 达标或用完次数| S[summarize]
+```
+
+三个运行时能力围绕这条结构展开：
+
+- **Reducer**：并行分支共同写入 `learning_events` 时由 `append_learning_events` 追加合并并保留最近 30 条；`recent_errors` 改为增量语义，评价节点只提交本轮缺口，`merge_recent_errors` 负责去重、跳过"暂无"标记并保留最近 3 条。没有这些 Annotated Reducer 时，并行写同一字段会触发 LangGraph 的同轮更新冲突。
+- **Retry**：五个模型节点挂接 `RetryPolicy`，只对瞬态错误重试——内置 `TimeoutError`、`ConnectionError`，以及 RateLimitError、APITimeoutError、APIConnectionError、InternalServerError、ServiceUnavailableError、OverloadedError 这些 Provider 常见异常类名。默认每节点最多 2 次尝试；`ValueError`、配置错误和 `interrupt()` 冒泡都不会重试。类名匹配是启发式，未知异常一律按原语义上抛。
+- **Cache**：`make_diagnostic` 被纯函数化——只由主题和诊断图片决定输出，不携带会话目标等上下文，因此可以按 `sha256(主题 + 题图)` 缓存节点更新。同一进程内相同主题与题图的会话复用同一道诊断题，不再重复调用模型。需要关闭时：
+
+```dotenv
+GRAPH_NODE_CACHE=false
+```
+
+重试与 LCEL 备用链会叠加：备用链先切换一次模型，节点重试再给一次整体机会，单节点最坏 4 次模型调用，仍然有界。`learning_events` 中的并行轨迹通过 Web 会话 JSON 与页面展示，明确标注跨分支顺序不保证。
+
 也可以把模型切换到 Google Gemini：
 
 ```dotenv
@@ -539,6 +575,7 @@ learning-coach/
 │       ├── middleware.py
 │       ├── model.py
 │       ├── nodes.py
+│       ├── resilience.py
 │       ├── retrieval.py
 │       ├── runnables.py
 │       ├── schemas.py
@@ -562,11 +599,12 @@ learning-coach/
     ├── test_middleware.py
     ├── test_model.py
     ├── test_retrieval.py
+    ├── test_resilience.py
     ├── test_routing.py
     └── test_web.py
 ```
 
-- `state.py`：学习过程、掌握度、最近错误、摘要和结构化诊断信息保存哪些数据。
+- `state.py`：学习过程、掌握度、最近错误、并行事件、摘要和结构化诊断信息保存哪些数据，并用 Reducer 定义并行合并语义。
 - `context.py`：定义 Runtime Context、预算校验、掌握度分层、最近错误和确定性摘要。
 - `ingestion.py`：定义资料输入、Metadata、位置感知 Splitter、SHA-256 和会话级增量索引。
 - `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
@@ -574,11 +612,12 @@ learning-coach/
 - `knowledge_graph.py`：实现实体关系抽取、别名消歧、概念图、有界前置遍历、图证据排名和 GraphRAG 包装器。
 - `code_practice.py`：实现代码工具注册表、确定性练习、有界 ReAct、受限 Python 执行、错误分类和三级提示。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
-- `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
-- `nodes.py`：诊断、讲解、出题、评价和总结节点。
+- `schemas.py`：诊断、评价、代码实践和并行学习事件的 Pydantic 结构。
+- `nodes.py`：诊断、并行讲解与练习准备、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
 - `retrieval.py`：把结构化资料 Chunk 和原有粘贴纯文本适配到共享 Hybrid Retriever。
-- `graph.py`：节点之间的固定边、条件边和循环。
+- `graph.py`：节点之间的固定边、Command 导航、并行 fan-out 和节点级 Retry/Cache 挂接。
+- `resilience.py`：瞬态错误分类、默认节点重试策略、诊断缓存键与缓存开关。
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
 - `auth.py`：把登录、状态和退出操作委托给官方 CLI。
@@ -630,6 +669,9 @@ learning-coach/
 - 本地受限执行器不是强隔离沙箱，不用于恶意代码、多租户或公网判题；上传的资料代码始终只读取、不执行。
 - 代码评分只表示当前服务端测试的通过比例，不等同于完整代码质量、安全性或真实掌握程度。
 - SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
+- 节点缓存只覆盖诊断阶段且仅在本进程内生效；相同主题与题图会复用同一道诊断题，`GRAPH_NODE_CACHE=false` 可关闭，缓存不跨服务重启保留。
+- 节点重试只按异常类名白名单与内置超时/连接错误判定瞬态，每节点最多 2 次尝试；与 LCEL 备用链叠加时单节点最坏 4 次模型调用，且重试不能恢复确定性配置错误。
+- 并行事件轨迹 `learning_events` 只用于展示与测试断言，保留最近 30 条；跨分支的事件顺序不保证，业务逻辑不依赖其顺序。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。
 - 外层仍是确定性 Workflow；Agent 只在讲解任务内部从两个只读工具中选择，并受到模型/工具预算和 LangGraph 补救次数的双重上限。

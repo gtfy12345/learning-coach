@@ -27,6 +27,7 @@ const contextMastery = document.querySelector("#context-mastery");
 const contextBudget = document.querySelector("#context-budget");
 const contextIngestion = document.querySelector("#context-ingestion");
 const contextRetrieval = document.querySelector("#context-retrieval");
+const contextEvents = document.querySelector("#context-events");
 const conceptGraphCard = document.querySelector("#concept-graph-card");
 const conceptGraphMeta = document.querySelector("#concept-graph-meta");
 const conceptGraphNodes = document.querySelector("#concept-graph-nodes");
@@ -262,6 +263,27 @@ function setProgress(stage, completed = false) {
   panelStatus.textContent = labels[normalizedStage] || "学习进行中";
 }
 
+function learningEventsText(data) {
+  const events = data.learning_events || [];
+  if (!events.length) return "并行执行轨迹将在诊断回答后显示";
+  const labels = {
+    teach: "讲解",
+    prepare_practice: "练习准备",
+    assess: "评价",
+  };
+  const kind =
+    data.practice_kind === "code"
+      ? "代码练习"
+      : data.practice_kind === "text"
+        ? "文本练习"
+        : "练习待定";
+  const parts = events.slice(-6).map((event) => {
+    const label = labels[event.node] || event.node;
+    return `${label}：${event.detail || event.status}`;
+  });
+  return `${kind} · 并行轨迹（顺序不保证）：${parts.join("｜")}`;
+}
+
 function updateContextInsight(data) {
   contextGoal.textContent = data.learning_goal || `掌握主题：${data.topic}`;
   contextMastery.textContent = `掌握度 ${data.mastery_level ?? data.score ?? 0} / 100`;
@@ -274,6 +296,7 @@ function updateContextInsight(data) {
     ? `资料 ${ingestion.sources_received} 个 · 新增 ${ingestion.sources_added} · 更新 ${ingestion.sources_updated} · 跳过 ${ingestion.sources_skipped}`
     : "尚未摄取学习资料";
   contextRetrieval.textContent = retrievalText(data.retrieval_report);
+  contextEvents.textContent = learningEventsText(data);
   if (data.graph_report?.graph_used) {
     contextRetrieval.textContent += ` · GraphRAG ${data.graph_report.prerequisites.length} 条前置路径`;
   }
