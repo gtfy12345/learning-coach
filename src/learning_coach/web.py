@@ -40,6 +40,7 @@ from learning_coach.schemas import (
     CodePracticeReport,
     ContextReport,
     GraphRAGReport,
+    LearningEvent,
     RetrievalReport,
     StudySource,
     ToolTraceEntry,
@@ -118,6 +119,8 @@ class SessionView(BaseModel):
     diagnostic_focus: str | None = None
     diagnostic_difficulty: str | None = None
     explanation: str | None = None
+    practice_kind: str | None = None
+    learning_events: list[LearningEvent] = Field(default_factory=list)
     score: int | None = None
     feedback: str | None = None
     missing_point: str | None = None
@@ -497,6 +500,8 @@ class LearningSessionService:
                 diagnostic_focus=state.get("diagnostic_focus"),
                 diagnostic_difficulty=state.get("diagnostic_difficulty"),
                 explanation=state.get("explanation"),
+                practice_kind=state.get("practice_kind"),
+                learning_events=state.get("learning_events", []),
                 score=state.get("score"),
                 feedback=state.get("feedback"),
                 missing_point=state.get("missing_point"),
@@ -524,6 +529,8 @@ class LearningSessionService:
             diagnostic_focus=state.get("diagnostic_focus"),
             diagnostic_difficulty=state.get("diagnostic_difficulty"),
             explanation=state.get("explanation"),
+            practice_kind=state.get("practice_kind"),
+            learning_events=state.get("learning_events", []),
             score=state.get("score"),
             feedback=state.get("feedback"),
             missing_point=state.get("missing_point"),
