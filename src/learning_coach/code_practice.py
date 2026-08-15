@@ -17,6 +17,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from learning_coach.schemas import (
     CodeDifficulty,
     CodeExercise,
+    CodeHint,
     CodePracticeRun,
     CodePracticeReport,
     CodeTestCase,
@@ -179,22 +180,78 @@ def _error_report(
     summary: str,
     test_id: str,
 ) -> CodePracticeReport:
+    outcomes = [
+        CodeTestOutcome(
+            test_id=test_id,
+            status="error",
+            summary=summary[:512],
+        )
+    ]
     return CodePracticeReport(
         status=status,
         error_type=error_type,
         passed_tests=0,
         total_tests=len(exercise.tests),
         score=0,
-        outcomes=[
-            CodeTestOutcome(
-                test_id=test_id,
-                status="error",
-                summary=summary[:512],
-            )
-        ],
-        hints=[],
+        outcomes=outcomes,
+        hints=_build_hints(error_type, exercise, outcomes),
         safety_notice=_SAFETY_NOTICE,
     )
+
+
+def _build_hints(
+    error_type: str,
+    exercise: CodeExercise,
+    outcomes: list[CodeTestOutcome],
+) -> list[CodeHint]:
+    if error_type == "none":
+        return []
+    detail = next(
+        (outcome.summary for outcome in outcomes if outcome.status != "passed"),
+        "No individual test detail is available.",
+    )
+    messages: dict[str, tuple[str, str, str]] = {
+        "syntax_error": (
+            "先检查函数定义、冒号、括号和缩进，确保代码可以被 Python 解析。",
+            f"执行前解析发现：{detail}",
+            f"保留 `{exercise.entrypoint}` 的函数签名，先写一个最小可运行返回值，再逐段加入分支。",
+        ),
+        "policy_violation": (
+            "这道题只需要参数、局部变量、分支、循环和允许的纯计算内置函数。",
+            f"安全策略拒绝了：{detail}",
+            "移除文件、网络、导入、反射或动态执行操作，把逻辑改写为只依赖函数参数的计算。",
+        ),
+        "timeout": (
+            "检查循环是否必然推进并退出，也要避免对输入做无界重复计算。",
+            f"受限执行观察：{detail}",
+            "为循环写出明确的不变量和终止条件；能用一次条件判断解决时，不要使用循环。",
+        ),
+        "resource_limit": (
+            "检查是否创建了过大的列表、递归或中间结果。",
+            f"受限进程观察：{detail}",
+            "让空间使用随输入线性或更低增长，并避免一次性复制、递归展开和大量临时对象。",
+        ),
+        "runtime_error": (
+            "先确认入口函数存在，并检查每种输入下参与运算的值类型。",
+            f"首个运行时线索：{detail}",
+            "用一个可见测试手动代入，从参数进入函数开始逐步检查每个表达式，再补齐异常分支。",
+        ),
+        "test_failure": (
+            "主路径已经能运行；下一步重点检查边界值和互斥分支。",
+            f"首个失败线索：{detail}",
+            "把需求拆成小于下界、大于上界和区间内三类输入，确认每类只命中一个返回路径。",
+        ),
+        "tool_error": (
+            "测试工具未能形成有效报告，先确认代码和练习输入保持在规定边界内。",
+            f"工具观察：{detail}",
+            "缩小为只包含入口函数的最小提交后重试；若仍失败，应由维护者检查本地执行环境。",
+        ),
+    }
+    selected = messages.get(error_type, messages["tool_error"])
+    return [
+        CodeHint(level=level, error_type=error_type, text=text)
+        for level, text in enumerate(selected, start=1)
+    ]
 
 
 def _runner_source(payload: str) -> str:
@@ -389,7 +446,11 @@ class RestrictedPythonExecutor:
             total_tests=len(exercise.tests),
             score=round(100 * passed / len(exercise.tests)),
             outcomes=outcomes,
-            hints=[],
+            hints=_build_hints(
+                "none" if all_passed else "runtime_error" if runtime_error else "test_failure",
+                exercise,
+                outcomes,
+            ),
             safety_notice=_SAFETY_NOTICE,
         )
 

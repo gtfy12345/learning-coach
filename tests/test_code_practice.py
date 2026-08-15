@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import learning_coach.code_practice as code_practice_module
 from learning_coach.code_practice import (
     BoundedCodePracticeAgent,
     CodePracticeToolRegistry,
@@ -252,3 +253,66 @@ def test_bounded_react_agent_stops_on_duplicate_action_and_budget() -> None:
     assert duplicate.trace[-1].status == "rejected"
     assert exhausted.tool_calls == 0
     assert exhausted.termination_reason == "budget_exhausted"
+
+
+@pytest.mark.parametrize(
+    ("code", "error_type"),
+    [
+        ("def clamp_score(score)\n    return score", "syntax_error"),
+        ("def clamp_score(score): return 1 / 0", "runtime_error"),
+        ("def clamp_score(score): return score", "test_failure"),
+    ],
+)
+def test_executor_classifies_errors_and_returns_three_hint_levels(
+    python_exercise: CodeExercise,
+    code: str,
+    error_type: str,
+) -> None:
+    report = RestrictedPythonExecutor().run(python_exercise, code)
+
+    assert report.error_type == error_type
+    assert [hint.level for hint in report.hints] == [1, 2, 3]
+    assert all(hint.error_type == error_type for hint in report.hints)
+    assert "def clamp_score(score): return min" not in report.model_dump_json()
+
+
+def test_failed_tests_produce_deterministic_partial_score_and_safe_detail(
+    python_exercise: CodeExercise,
+) -> None:
+    report = RestrictedPythonExecutor().run(
+        python_exercise,
+        "def clamp_score(score):\n    return max(0, score)\n",
+    )
+
+    assert report.error_type == "test_failure"
+    assert report.passed_tests == 3
+    assert report.total_tests == 4
+    assert report.score == 75
+    assert report.outcomes[2].summary == "output mismatch in hidden test"
+    assert "120" not in report.outcomes[2].summary
+
+
+def test_missing_runner_result_is_classified_as_resource_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    python_exercise: CodeExercise,
+) -> None:
+    class Completed:
+        stdout = ""
+        stderr = "killed"
+        returncode = -9
+
+    monkeypatch.setattr(
+        code_practice_module.subprocess,
+        "run",
+        lambda *args, **kwargs: Completed(),
+    )
+
+    report = RestrictedPythonExecutor().run(
+        python_exercise,
+        "def clamp_score(score): return score",
+    )
+
+    assert report.error_type == "resource_limit"
+    assert report.status == "error"
+    assert [hint.level for hint in report.hints] == [1, 2, 3]
+    assert "killed" not in report.model_dump_json()
