@@ -1,16 +1,16 @@
 # LangGraph 状态图进阶实施 Checklist
 
 > **版本**: 1.0
-> **状态**: draft
+> **状态**: active
 > **更新日期**: 2026-08-15
 
 **关联计划**: [implementation.md](./implementation.md)
 
 ## Phase 1: Reducer、并行分支与 Command 导航
 
-- [ ] 1.1 定义 State Reducer 与学习事件契约
-- [ ] 1.2 拆分确定性练习准备节点
-- [ ] 1.3 用 Command 实现 fan-out 与条件导航
+- [x] 1.1 定义 State Reducer 与学习事件契约
+- [x] 1.2 拆分确定性练习准备节点
+- [x] 1.3 用 Command 实现 fan-out 与条件导航
 
 ## Phase 2: 节点级 Retry 与瞬态错误分类
 

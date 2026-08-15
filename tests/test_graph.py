@@ -1,15 +1,18 @@
 from typing import Any
 
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
+from pydantic import ValidationError
 
 from learning_coach.graph import build_learning_graph
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import Assessment, Diagnostic
-from learning_coach.schemas import GroundedTeaching
+from learning_coach.schemas import GroundedTeaching, LearningEvent
+from learning_coach.state import MAX_LEARNING_EVENTS, append_learning_events
 
 
 class FakeStructuredModel:
@@ -64,6 +67,55 @@ class FakeChatModel:
         return FakeStructuredModel(self, schema)
 
 
+class ScriptedStructuredModel:
+    """Structured fake whose assessment scores are scripted per attempt."""
+
+    def __init__(self, owner: "ScriptedFakeChatModel", schema: type[Any]) -> None:
+        self.owner = owner
+        self.schema = schema
+
+    def invoke(self, messages: Any) -> Diagnostic | Assessment:
+        if self.schema is Diagnostic:
+            return Diagnostic(
+                question="Command 的 goto 可以同时指向多个节点吗？",
+                focus="并行 fan-out",
+                difficulty="application",
+            )
+        assert self.schema is Assessment
+        index = min(self.owner.assessment_calls, len(self.owner.scores) - 1)
+        score = self.owner.scores[index]
+        self.owner.assessment_calls += 1
+        return Assessment(
+            score=score,
+            feedback=f"第 {self.owner.assessment_calls} 次评价：{score} 分。",
+            missing_point=f"缺口-{self.owner.assessment_calls}",
+        )
+
+
+class ScriptedFakeChatModel(FakeChatModel):
+    """FakeChatModel with enough streamed responses for two remediation rounds."""
+
+    def __init__(self, scores: list[int]) -> None:
+        super().__init__()
+        self.scores = scores
+        self.assessment_calls = 0
+        self.responses = iter(
+            [
+                "第一次讲解：并行分支需要 Reducer 合并。",
+                "第一次练习：说明默认覆盖的风险。",
+                "第二次讲解：补救讲解聚焦上一次缺口。",
+                "第二次练习：再给一个并行写入的例子。",
+                "两次尝试后的小结：说明合并与终止边界。",
+            ]
+        )
+
+    def with_structured_output(
+        self, schema: type[Any], *, method: str
+    ) -> ScriptedStructuredModel:
+        self.structured_methods.append(method)
+        return ScriptedStructuredModel(self, schema)
+
+
 def test_graph_pauses_for_two_answers_then_finishes() -> None:
     graph = build_learning_graph(FakeChatModel())
     config = {"configurable": {"thread_id": "test-learning-session"}}
@@ -94,7 +146,13 @@ def test_graph_runtime_context_survives_interrupts_and_updates_progress() -> Non
     )
 
     result = graph.invoke(
-        {"topic": "LangGraph Reducer", "attempts": 0},
+        {
+            "topic": "LangGraph Reducer",
+            "learning_goal": runtime.learning_goal,
+            "mastery_level": 0,
+            "recent_errors": [],
+            "attempts": 0,
+        },
         config=config,
         context=runtime,
     )
@@ -181,13 +239,14 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
             "attempts": 0,
         }
     )
-    summary = nodes.summarize({"topic": "LCEL", **assessment})
+    summary = nodes.summarize({"topic": "LCEL", **assessment.update})
 
     assert diagnostic["diagnostic_question"] == "诊断 LCEL"
     assert teaching["explanation"] == "讲解 使用管道组合。"
     assert quiz["quiz_question"].startswith("练习")
-    assert assessment["score"] == 90
-    assert assessment["attempts"] == 1
+    assert assessment.goto == "summarize"
+    assert assessment.update["score"] == 90
+    assert assessment.update["attempts"] == 1
     assert summary["summary"].startswith("总结 90")
 
 
@@ -219,13 +278,12 @@ def test_assessment_tracks_recent_errors_for_remedial_context() -> None:
         runtime=runtime,
     )
 
-    assert result["mastery_level"] == 55
-    assert result["recent_errors"] == [
-        "没有说明 score 阈值",
-        "遗漏 attempts 上限",
-    ]
-    assert "55/100" in result["context_summary"]
-    assert "遗漏 attempts 上限" in result["context_summary"]
+    assert result.goto == ["teach", "prepare_practice"]
+    assert result.update["mastery_level"] == 55
+    assert result.update["recent_errors"] == ["遗漏 attempts 上限"]
+    assert "55/100" in result.update["context_summary"]
+    assert "遗漏 attempts 上限" in result.update["context_summary"]
+    assert "没有说明 score 阈值" in result.update["context_summary"]
 
 
 def test_graph_streams_task_status_text_and_sources_before_final_state() -> None:
@@ -350,3 +408,92 @@ def test_zero_tool_budget_keeps_python_topic_on_text_quiz_path() -> None:
     )
 
     assert result == {"quiz_question": "解释函数的输入输出关系。"}
+
+
+def test_append_learning_events_merges_parallel_updates_and_caps_size() -> None:
+    assert append_learning_events(
+        [{"node": "teach"}], [{"node": "prepare_practice"}]
+    ) == [{"node": "teach"}, {"node": "prepare_practice"}]
+    assert append_learning_events([], None) == []
+    events = [{"node": "teach", "index": index} for index in range(MAX_LEARNING_EVENTS)]
+    merged = append_learning_events(events, [{"node": "assess"}])
+    assert len(merged) == MAX_LEARNING_EVENTS
+    assert merged[-1] == {"node": "assess"}
+    assert merged[0]["index"] == 1
+
+
+def test_learning_event_schema_only_accepts_known_nodes() -> None:
+    event = LearningEvent(node="prepare_practice", detail="练习类型：text")
+    assert event.status == "completed"
+    with pytest.raises(ValidationError):
+        LearningEvent(node="summarize")
+    with pytest.raises(ValidationError):
+        LearningEvent(node="teach", detail="d", extra="forbidden")
+
+
+def test_graph_runs_teach_and_prepare_practice_in_parallel() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "parallel-text-session"}}
+
+    graph.invoke({"topic": "LangGraph Reducer", "attempts": 0}, config=config)
+    result = graph.invoke(
+        Command(resume="后执行节点会覆盖旧值。"), config=config
+    )
+
+    assert result["__interrupt__"][0].value["kind"] == "quiz"
+    assert result["practice_kind"] == "text"
+    event_nodes = {event["node"] for event in result["learning_events"]}
+    assert event_nodes == {"teach", "prepare_practice"}
+    for event in result["learning_events"]:
+        assert event["status"] == "completed"
+        assert event["detail"]
+    assert "Reducer" in result["explanation"]
+
+
+def test_graph_parallel_code_preparation_ready_before_quiz() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "parallel-code-session"}}
+
+    graph.invoke({"topic": "Python 函数", "attempts": 0}, config=config)
+    result = graph.invoke(
+        Command(resume="函数把输入映射为输出。"), config=config
+    )
+
+    payload = result["__interrupt__"][0].value
+    assert payload["kind"] == "quiz"
+    assert result["practice_kind"] == "code"
+    assert payload["code_exercise"]["entrypoint"] == "clamp_score"
+    assert result["code_exercise"]["tests"]
+    assert result["code_tool_trace"][0]["tool_name"] == "generate_code_exercise"
+    prepare_event = next(
+        event
+        for event in result["learning_events"]
+        if event["node"] == "prepare_practice"
+    )
+    assert "code" in prepare_event["detail"]
+    assert "clamp_score" in prepare_event["detail"]
+
+
+def test_graph_finishes_after_two_failed_attempts_with_parallel_retry() -> None:
+    model = ScriptedFakeChatModel(scores=[55, 55])
+    graph = build_learning_graph(model)
+    config = {"configurable": {"thread_id": "bounded-retry-session"}}
+
+    graph.invoke({"topic": "循环终止", "attempts": 0}, config=config)
+    result = graph.invoke(Command(resume="达到分数后停止。"), config=config)
+    assert result["__interrupt__"][0].value["kind"] == "quiz"
+    result = graph.invoke(Command(resume="分数上限约束重试。"), config=config)
+    assert result["__interrupt__"][0].value["kind"] == "quiz"
+    assert result["attempts"] == 1
+    result = graph.invoke(Command(resume="用完次数后进入总结。"), config=config)
+
+    assert "__interrupt__" not in result
+    assert result["attempts"] == 2
+    assert result["score"] == 55
+    assert result["summary"]
+    assert model.assessment_calls == 2
+    event_nodes = [event["node"] for event in result["learning_events"]]
+    assert event_nodes.count("assess") == 2
+    assert event_nodes.count("teach") == 2
+    assert event_nodes.count("prepare_practice") == 2
+    assert result["recent_errors"] == ["缺口-1", "缺口-2"]

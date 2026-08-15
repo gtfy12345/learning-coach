@@ -9,6 +9,7 @@ from learning_coach.context import (
     build_context_summary,
     build_teaching_context,
     create_learning_runtime_context,
+    merge_recent_errors,
     update_recent_errors,
 )
 from learning_coach.state import LearningState
@@ -220,3 +221,22 @@ def test_public_docs_describe_context_engineering_configuration() -> None:
         assert setting in env_example
     assert "不支持 Tool Calling" in readme
     assert "LCEL 兼容路径" in readme
+
+
+def test_merge_recent_errors_joins_deltas_and_keeps_latest_three() -> None:
+    assert merge_recent_errors(["缺口-A"], ["缺口-B"]) == ["缺口-A", "缺口-B"]
+    assert merge_recent_errors(["缺口-A", "缺口-B"], ["缺口-A"]) == [
+        "缺口-B",
+        "缺口-A",
+    ]
+    assert merge_recent_errors(["缺口-A", "缺口-B", "缺口-C"], ["缺口-D"]) == [
+        "缺口-B",
+        "缺口-C",
+        "缺口-D",
+    ]
+
+
+def test_merge_recent_errors_skips_markers_and_empty_updates() -> None:
+    assert merge_recent_errors(["缺口-A"], ["", "暂无", "无"]) == ["缺口-A"]
+    assert merge_recent_errors(["缺口-A"], None) == ["缺口-A"]
+    assert merge_recent_errors([], ["已经掌握"]) == []

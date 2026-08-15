@@ -2,19 +2,20 @@ from typing import Any, Literal
 
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 
 from learning_coach.code_practice import (
     BoundedCodePracticeAgent,
     CodePracticeToolRegistry,
     DeterministicExerciseGenerator,
     RestrictedPythonExecutor,
+    is_code_practice_topic,
 )
 from learning_coach.context import (
     LearningRuntimeContext,
     build_context_summary,
     create_learning_runtime_context,
-    update_recent_errors,
+    merge_recent_errors,
 )
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
@@ -23,6 +24,7 @@ from learning_coach.schemas import (
     CodeExercise,
     CodeExerciseView,
     GroundedTeaching,
+    LearningEvent,
 )
 from learning_coach.state import LearningState
 
@@ -54,12 +56,13 @@ class LearningCoachNodes:
             CodePracticeToolRegistry(generator=generator, runner=executor.run)
         )
 
-    def make_diagnostic(
-        self,
-        state: LearningState,
-        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
-    ) -> dict[str, Any]:
-        learning_runtime = self._runtime_context(state, runtime)
+    def make_diagnostic(self, state: LearningState) -> dict[str, Any]:
+        """Generate the diagnostic question from the topic and images only.
+
+        The node stays a pure function of its state input so the graph can
+        cache and replay its update without leaking another session's context.
+        """
+
         self._write_status("diagnostic", "started")
         diagnostic = self.runnables.diagnostic.invoke(
             {
@@ -67,25 +70,24 @@ class LearningCoachNodes:
                 "diagnostic_images": state.get("diagnostic_images", []),
             }
         )
-        result = {
-            "learning_goal": learning_runtime.learning_goal,
-            "mastery_level": state.get("mastery_level", 0),
-            "recent_errors": list(state.get("recent_errors", [])),
+        self._write_status("diagnostic", "completed")
+        return {
             "diagnostic_question": diagnostic.question,
             "diagnostic_focus": diagnostic.focus,
             "diagnostic_difficulty": diagnostic.difficulty,
         }
-        self._write_status("diagnostic", "completed")
-        return result
 
-    def collect_diagnostic(self, state: LearningState) -> dict[str, Any]:
+    def collect_diagnostic(self, state: LearningState) -> Command:
         answer = interrupt(
             {
                 "kind": "diagnostic",
                 "question": state["diagnostic_question"],
             }
         )
-        return {"diagnostic_answer": str(answer), "attempts": 0}
+        return Command(
+            goto=["teach", "prepare_practice"],
+            update={"diagnostic_answer": str(answer), "attempts": 0},
+        )
 
     def teach(
         self,
@@ -166,6 +168,66 @@ class LearningCoachNodes:
             result["retrieval_report"] = retrieval_report.model_dump()
         if graph_report is not None:
             result["graph_report"] = graph_report.model_dump()
+        result["learning_events"] = [
+            LearningEvent(
+                node="teach",
+                status="completed",
+                detail=f"讲解完成 · 参考来源 {len(sources)} 个",
+            ).model_dump(mode="json")
+        ]
+        return result
+
+    def prepare_practice(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        """Decide the practice kind and pre-generate the deterministic exercise.
+
+        This node only reads the topic and the tool budget, so the graph can
+        run it in parallel with ``teach`` and merge both branches at the quiz
+        fan-in node.
+        """
+
+        learning_runtime = self._runtime_context(state, runtime)
+        wants_code = (
+            learning_runtime.tool_call_limit > 0
+            and is_code_practice_topic(state["topic"])
+        )
+        result: dict[str, Any] = {"practice_kind": "code" if wants_code else "text"}
+        exercise = None
+        code_run = None
+        if wants_code:
+            code_run = self.code_practice.generate(
+                topic=state["topic"],
+                explanation="",
+                tool_call_limit=learning_runtime.tool_call_limit,
+            )
+            exercise = code_run.exercise
+        if exercise is not None:
+            assert code_run is not None
+            public_exercise = CodeExerciseView.from_exercise(exercise)
+            self._write_event(
+                {
+                    "event": "code_practice",
+                    "stage": "generated",
+                    "exercise": public_exercise.model_dump(mode="json"),
+                    "trace": [item.model_dump() for item in code_run.trace],
+                }
+            )
+            result["code_exercise"] = exercise.model_dump(mode="json")
+            result["code_tool_trace"] = [
+                item.model_dump() for item in code_run.trace
+            ]
+            detail = f"练习类型：code · 入口函数 {exercise.entrypoint}"
+        else:
+            result["practice_kind"] = "text"
+            detail = "练习类型：text"
+        result["learning_events"] = [
+            LearningEvent(
+                node="prepare_practice", status="completed", detail=detail
+            ).model_dump(mode="json")
+        ]
         return result
 
     def make_quiz(
@@ -175,32 +237,45 @@ class LearningCoachNodes:
     ) -> dict[str, Any]:
         learning_runtime = self._runtime_context(state, runtime)
         self._write_status("quiz", "started")
-        code_run = self.code_practice.generate(
-            topic=state["topic"],
-            explanation=state["explanation"],
-            tool_call_limit=learning_runtime.tool_call_limit,
-        )
-        if code_run.exercise is not None:
-            exercise = code_run.exercise
-            public_exercise = CodeExerciseView.from_exercise(exercise)
+        exercise_payload = state.get("code_exercise")
+        code_run = None
+        if exercise_payload is None and (
+            learning_runtime.tool_call_limit > 0
+            and is_code_practice_topic(state["topic"])
+        ):
+            # prepare_practice did not run (direct node call); stay self-contained.
+            code_run = self.code_practice.generate(
+                topic=state["topic"],
+                explanation=state.get("explanation", ""),
+                tool_call_limit=learning_runtime.tool_call_limit,
+            )
+            if code_run.exercise is not None:
+                exercise_payload = code_run.exercise.model_dump(mode="json")
+        if exercise_payload is not None:
+            exercise = CodeExercise.model_validate(exercise_payload)
             question = (
                 f"{exercise.title}\n\n{exercise.instructions}\n"
                 f"入口函数：{exercise.entrypoint}"
             )
-            self._write_event(
-                {
-                    "event": "code_practice",
-                    "stage": "generated",
-                    "exercise": public_exercise.model_dump(mode="json"),
-                    "trace": [item.model_dump() for item in code_run.trace],
-                }
-            )
+            result: dict[str, Any] = {"quiz_question": question}
+            if code_run is not None and code_run.exercise is not None:
+                public_exercise = CodeExerciseView.from_exercise(code_run.exercise)
+                self._write_event(
+                    {
+                        "event": "code_practice",
+                        "stage": "generated",
+                        "exercise": public_exercise.model_dump(mode="json"),
+                        "trace": [
+                            item.model_dump() for item in code_run.trace
+                        ],
+                    }
+                )
+                result["code_exercise"] = exercise_payload
+                result["code_tool_trace"] = [
+                    item.model_dump() for item in code_run.trace
+                ]
             self._write_status("quiz", "completed")
-            return {
-                "quiz_question": question,
-                "code_exercise": exercise.model_dump(mode="json"),
-                "code_tool_trace": [item.model_dump() for item in code_run.trace],
-            }
+            return result
         parts = self.runnables.quiz.stream(
             {
                 "topic": state["topic"],
@@ -234,7 +309,7 @@ class LearningCoachNodes:
         self,
         state: LearningState,
         runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
-    ) -> dict[str, Any]:
+    ) -> Command:
         learning_runtime = self._runtime_context(state, runtime)
         self._write_status("assessment", "started")
         code_exercise = state.get("code_exercise")
@@ -280,35 +355,50 @@ class LearningCoachNodes:
                     "quiz_answer": state["quiz_answer"],
                 }
             )
-        recent_errors = list(state.get("recent_errors", []))
+        attempts = state.get("attempts", 0) + 1
+        error_delta: list[str] = []
         if assessment.score < learning_runtime.target_mastery:
-            recent_errors = update_recent_errors(
-                recent_errors, assessment.missing_point
-            )
+            error_delta = [assessment.missing_point]
+        merged_errors = merge_recent_errors(
+            list(state.get("recent_errors", [])), error_delta
+        )
         progress = dict(state)
         progress.update(
             mastery_level=assessment.score,
-            recent_errors=recent_errors,
+            recent_errors=merged_errors,
             feedback=assessment.feedback,
         )
-        result = {
+        update: dict[str, Any] = {
             "score": assessment.score,
             "mastery_level": assessment.score,
             "feedback": assessment.feedback,
             "missing_point": assessment.missing_point,
-            "recent_errors": recent_errors,
+            "recent_errors": error_delta,
             "context_summary": build_context_summary(
                 progress, learning_runtime
             ),
-            "attempts": state.get("attempts", 0) + 1,
+            "attempts": attempts,
+            "learning_events": [
+                LearningEvent(
+                    node="assess",
+                    status="completed",
+                    detail=f"第 {attempts} 次评价 {assessment.score} 分",
+                ).model_dump(mode="json")
+            ],
         }
         if code_run is not None and code_run.report is not None:
-            result["code_practice_report"] = code_run.report.model_dump(mode="json")
-            result["code_tool_trace"] = [
+            update["code_practice_report"] = code_run.report.model_dump(mode="json")
+            update["code_tool_trace"] = [
                 item.model_dump() for item in code_run.trace
             ]
         self._write_status("assessment", "completed")
-        return result
+        route = route_after_assessment(
+            {"score": assessment.score, "attempts": attempts}
+        )
+        goto: Any = (
+            ["teach", "prepare_practice"] if route == "retry" else "summarize"
+        )
+        return Command(goto=goto, update=update)
 
     @staticmethod
     def _runtime_context(

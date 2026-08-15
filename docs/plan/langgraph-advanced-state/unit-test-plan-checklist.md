@@ -1,20 +1,20 @@
 # LangGraph 状态图进阶单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: draft
+> **状态**: active
 > **更新日期**: 2026-08-15
 
 **关联测试计划**: [unit-test-plan.md](./unit-test-plan.md)
 
 ## Phase 1: Reducer、并行分支与 Command 导航
 
-- [ ] 1.1 merge_recent_errors 合并、去重、标记与上限
-- [ ] 1.2 append_learning_events 拼接与 30 条上限
-- [ ] 1.3 LearningEvent Schema 边界
-- [ ] 1.4 prepare_practice 三种路径
-- [ ] 1.5 make_quiz fan-in 与直调兼容
-- [ ] 1.6 图级并行事件合并
-- [ ] 1.7 assess Command 方向与增量
+- [x] 1.1 merge_recent_errors 合并、去重、标记与上限
+- [x] 1.2 append_learning_events 拼接与 30 条上限
+- [x] 1.3 LearningEvent Schema 边界
+- [x] 1.4 prepare_practice 三种路径
+- [x] 1.5 make_quiz fan-in 与直调兼容
+- [x] 1.6 图级并行事件合并
+- [x] 1.7 assess Command 方向与增量
 
 ## Phase 2: 节点级 Retry 与瞬态错误分类
 

@@ -138,6 +138,17 @@ def update_recent_errors(
     return errors[-MAX_RECENT_ERRORS:]
 
 
+def merge_recent_errors(
+    existing: list[str], updates: list[str] | None
+) -> list[str]:
+    """Reducer: merge error deltas from nodes into the bounded error list."""
+
+    merged = list(existing)
+    for value in updates or []:
+        merged = update_recent_errors(merged, value)
+    return merged
+
+
 def _mastery_level(value: Any) -> int:
     try:
         mastery = int(value)
