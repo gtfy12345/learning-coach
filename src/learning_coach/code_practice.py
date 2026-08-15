@@ -41,7 +41,8 @@ _CODE_TOPIC_MARKERS = (
 def is_code_practice_topic(topic: str, explanation: str = "") -> bool:
     """Return whether the learner explicitly requested a coding topic."""
 
-    haystack = f"{topic}\n{explanation}".casefold()
+    del explanation
+    haystack = topic.casefold()
     return any(marker in haystack for marker in _CODE_TOPIC_MARKERS)
 
 
@@ -62,7 +63,7 @@ class DeterministicExerciseGenerator:
         if not is_code_practice_topic(request.topic, request.explanation):
             return None
         if any(
-            marker in f"{request.topic}\n{request.explanation}".casefold()
+            marker in request.topic.casefold()
             for marker in ("列表", "list", "去重", "deduplicate")
         ):
             title = "保持顺序去重"
