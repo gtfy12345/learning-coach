@@ -17,8 +17,8 @@
 | [自校正 Hybrid RAG](./self-corrective-hybrid-rag-design.md) | 1.0 | completed | 2026-08-14 |
 | [多模态学习资料摄取](./multimodal-material-ingestion-design.md) | 1.0 | completed | 2026-08-14 |
 | [Context Engineering 与 Middleware](./context-engineering-middleware-design.md) | 1.0 | completed | 2026-08-13 |
-| [LCEL 生产级组合与内存 RAG](./lcel-production-chain-design.md) | 1.0 | active | 2026-08-12 |
-| [LCEL Runnable 任务层](./lcel-runnable-task-layer-design.md) | 1.0 | active | 2026-08-12 |
+| [LCEL 生产级组合与内存 RAG](./lcel-production-chain-design.md) | 1.0 | completed | 2026-08-12 |
+| [LCEL Runnable 任务层](./lcel-runnable-task-layer-design.md) | 1.0 | completed | 2026-08-12 |
 
 <!--
 示例格式：
