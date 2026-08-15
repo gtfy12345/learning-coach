@@ -33,14 +33,23 @@ from learning_coach.context import (
 )
 from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
+from learning_coach.memory import (
+    compare_learning_states,
+    create_checkpointer,
+    create_memory_store,
+    fork_session,
+    list_session_checkpoints,
+)
 from learning_coach.retrieval import normalize_study_material
 from learning_coach.schemas import (
     AgentHandoff,
+    CheckpointMilestone,
     CodeExercise,
     CodeExerciseView,
     CodePracticeReport,
     ContextReport,
     GraphRAGReport,
+    LearnerMemoryView,
     LearningEvent,
     ResearchEvidence,
     RetrievalReport,
@@ -103,12 +112,26 @@ class AnswerRequest(BaseModel):
         return normalized
 
 
+class ForkRequest(BaseModel):
+    checkpoint_id: str = Field(min_length=1, max_length=64)
+
+    @field_validator("checkpoint_id")
+    @classmethod
+    def strip_checkpoint(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("checkpoint_id 不能为空。")
+        return normalized
+
+
 class SessionView(BaseModel):
     session_id: str
     status: Literal["waiting", "completed"]
-    stage: Literal["diagnostic", "quiz", "summary"]
+    stage: Literal["diagnostic", "quiz", "approval", "summary"]
     topic: str
     learning_goal: str
+    learner_id: str = "local-learner"
+    long_term_memory: LearnerMemoryView | None = None
     mastery_level: int = 0
     recent_errors: list[str] = Field(default_factory=list)
     context_summary: str | None = None
@@ -129,6 +152,7 @@ class SessionView(BaseModel):
     research_evidence: ResearchEvidence | None = None
     teaching_reviews: list[ReviewFinding] = Field(default_factory=list)
     agent_handoffs: list[AgentHandoff] = Field(default_factory=list)
+    execution_approved: bool | None = None
     score: int | None = None
     feedback: str | None = None
     missing_point: str | None = None
@@ -167,10 +191,14 @@ class LearningSessionService:
         run_timeout_seconds: float | None = None,
         context_settings: LearningContextSettings | None = None,
         web_fetcher: SafeWebFetcher | None = None,
+        checkpointer: Any | None = None,
+        store: Any | None = None,
     ) -> None:
         self._models = models
         self._models_factory = models_factory
         self._graph: Any | None = None
+        self._checkpointer = checkpointer
+        self._store = store
         self._chat_model_id = chat_model_id
         self._assessment_model_id = assessment_model_id
         self._advanced_chat_model_id: str | None = None
@@ -190,6 +218,10 @@ class LearningSessionService:
             os.environ
         )
         self._web_fetcher = web_fetcher
+        if self._checkpointer is None:
+            self._checkpointer = create_checkpointer(os.environ)
+        if self._store is None:
+            self._store = create_memory_store(os.environ)
         self._setup_lock = threading.Lock()
         self._invoke_lock = threading.Lock()
 
@@ -200,7 +232,11 @@ class LearningSessionService:
             if self._graph is None:
                 if self._models is None:
                     self._models = self._models_factory()
-                self._graph = build_learning_graph(self._models)
+                self._graph = build_learning_graph(
+                    self._models,
+                    checkpointer=self._checkpointer,
+                    store=self._store,
+                )
         return self._graph
 
     def public_config(self) -> PublicModelConfig:
@@ -254,12 +290,14 @@ class LearningSessionService:
         study_material: str,
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
+        learner_id: str = "",
     ) -> dict[str, Any]:
         normalized_topic = topic.strip()
         if not normalized_topic:
             raise ValueError("学习主题不能为空。")
         if len(normalized_topic) > 500:
             raise ValueError("学习主题不能超过 500 个字符。")
+        normalized_learner = learner_id.strip()[:100]
 
         self._ensure_graph()
         assert self._models is not None
@@ -274,6 +312,7 @@ class LearningSessionService:
         initial_state: dict[str, Any] = {
             "topic": normalized_topic,
             "learning_goal": runtime_context.learning_goal,
+            "learner_id": normalized_learner or "local-learner",
             "mastery_level": 0,
             "recent_errors": [],
             "attempts": 0,
@@ -313,11 +352,12 @@ class LearningSessionService:
         study_material: str = "",
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
+        learner_id: str = "",
     ) -> SessionView:
         graph = self._ensure_graph()
         session_id = uuid.uuid4().hex
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal, materials
+            topic, image_blocks, study_material, learning_goal, materials, learner_id
         )
         runtime_context = create_learning_runtime_context(
             initial_state["topic"],
@@ -347,9 +387,10 @@ class LearningSessionService:
         study_material: str = "",
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
+        learner_id: str = "",
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal, materials
+            topic, image_blocks, study_material, learning_goal, materials, learner_id
         )
         session_id = uuid.uuid4().hex
         self._runtime_contexts[session_id] = create_learning_runtime_context(
@@ -395,6 +436,50 @@ class LearningSessionService:
         if len(normalized_answer) > 20_000:
             raise ValueError("回答不能超过 20000 个字符。")
         return normalized_answer
+
+    def session_history(self, session_id: str) -> list[CheckpointMilestone]:
+        if session_id not in self._sessions:
+            raise SessionNotFoundError("找不到该学习会话；服务重启后请重新开始。")
+        graph = self._ensure_graph()
+        return list_session_checkpoints(
+            graph, {"configurable": {"thread_id": f"web-{session_id}"}}
+        )
+
+    def fork_session_view(
+        self, session_id: str, checkpoint_id: str
+    ) -> dict[str, Any]:
+        if session_id not in self._sessions:
+            raise SessionNotFoundError("找不到该学习会话；服务重启后请重新开始。")
+        if not checkpoint_id.strip():
+            raise ValueError("checkpoint_id 不能为空。")
+        graph = self._ensure_graph()
+        fork_session_id = uuid.uuid4().hex
+        fork_result = fork_session(
+            graph,
+            {"configurable": {"thread_id": f"web-{session_id}"}},
+            checkpoint_id.strip(),
+            f"web-{fork_session_id}",
+        )
+        runtime_context = self._runtime_contexts[session_id]
+        with self._invoke_lock:
+            result = graph.invoke(
+                None,
+                config=fork_result["fork_config"],
+                context=runtime_context,
+            )
+        self._sessions.add(fork_session_id)
+        self._runtime_contexts[fork_session_id] = runtime_context
+        view = self._view(fork_session_id, result)
+        comparison = compare_learning_states(
+            fork_result["baseline"], result
+        )
+        return {
+            "session": view,
+            "forked_from": session_id,
+            "checkpoint_id": checkpoint_id.strip(),
+            "entry_node": fork_result["entry_node"],
+            "comparison": comparison,
+        }
 
     async def _graph_events(
         self,
@@ -486,15 +571,24 @@ class LearningSessionService:
         interrupts = state.get("__interrupt__", ())
         if interrupts:
             payload = interrupts[0].value
-            stage = payload.get("kind", "quiz")
+            kind = payload.get("kind", "quiz")
+            stage = (
+                "diagnostic"
+                if kind == "diagnostic"
+                else "approval"
+                if kind == "approval"
+                else "quiz"
+            )
             return SessionView(
                 session_id=session_id,
                 status="waiting",
-                stage="diagnostic" if stage == "diagnostic" else "quiz",
+                stage=stage,
                 topic=state["topic"],
                 learning_goal=state.get(
                     "learning_goal", f"掌握主题：{state['topic']}"
                 ),
+                learner_id=state.get("learner_id", "local-learner"),
+                long_term_memory=state.get("long_term_memory"),
                 mastery_level=state.get("mastery_level", state.get("score", 0) or 0),
                 recent_errors=state.get("recent_errors", []),
                 context_summary=state.get("context_summary"),
@@ -515,6 +609,7 @@ class LearningSessionService:
                 research_evidence=state.get("research_evidence"),
                 teaching_reviews=state.get("teaching_reviews", []),
                 agent_handoffs=state.get("agent_handoffs", []),
+                execution_approved=state.get("execution_approved"),
                 score=state.get("score"),
                 feedback=state.get("feedback"),
                 missing_point=state.get("missing_point"),
@@ -529,6 +624,8 @@ class LearningSessionService:
             learning_goal=state.get(
                 "learning_goal", f"掌握主题：{state['topic']}"
             ),
+            learner_id=state.get("learner_id", "local-learner"),
+            long_term_memory=state.get("long_term_memory"),
             mastery_level=state.get("mastery_level", state.get("score", 0) or 0),
             recent_errors=state.get("recent_errors", []),
             context_summary=state.get("context_summary"),
@@ -548,6 +645,7 @@ class LearningSessionService:
             research_evidence=state.get("research_evidence"),
             teaching_reviews=state.get("teaching_reviews", []),
             agent_handoffs=state.get("agent_handoffs", []),
+            execution_approved=state.get("execution_approved"),
             score=state.get("score"),
             feedback=state.get("feedback"),
             missing_point=state.get("missing_point"),
@@ -559,6 +657,8 @@ class LearningSessionService:
 
 def _raise_http_error(exc: Exception) -> None:
     if isinstance(exc, SessionNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -630,6 +730,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     async def start_session(
         topic: str = Form(...),
         learning_goal: str = Form(default=""),
+        learner_id: str = Form(default=""),
         image: UploadFile | None = File(default=None),
         materials: list[UploadFile] | None = File(default=None),
         study_material: str = Form(default=""),
@@ -655,6 +756,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 study_material,
                 learning_goal,
                 material_inputs,
+                learner_id,
             )
         except Exception as exc:
             _raise_http_error(exc)
@@ -667,6 +769,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     async def start_session_stream(
         topic: str = Form(...),
         learning_goal: str = Form(default=""),
+        learner_id: str = Form(default=""),
         image: UploadFile | None = File(default=None),
         materials: list[UploadFile] | None = File(default=None),
         study_material: str = Form(default=""),
@@ -691,6 +794,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 study_material,
                 learning_goal,
                 material_inputs,
+                learner_id,
             )
         except Exception as exc:
             _raise_http_error(exc)
@@ -746,6 +850,32 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @application.get(
+        "/api/sessions/{session_id}/history",
+        response_model=list[CheckpointMilestone],
+    )
+    def session_history(session_id: str) -> list[CheckpointMilestone]:
+        try:
+            return session_service.session_history(session_id)
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.post("/api/sessions/{session_id}/fork")
+    async def fork_session_endpoint(
+        session_id: str,
+        request: ForkRequest,
+    ) -> dict[str, Any]:
+        try:
+            return await run_in_threadpool(
+                session_service.fork_session_view,
+                session_id,
+                request.checkpoint_id,
+            )
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
 
     return application
 

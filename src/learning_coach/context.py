@@ -178,11 +178,14 @@ def build_context_summary(
 ) -> str:
     """Summarize learning progress deterministically without another model call."""
 
+    from learning_coach.memory import memory_summary_line
+
     mastery = _mastery_level(values.get("mastery_level", 0))
     recent_errors = update_recent_errors(
         list(values.get("recent_errors", [])), None
     )
     errors_text = "；".join(recent_errors) or "暂无已确认错误"
+    memory_line = memory_summary_line(values.get("long_term_memory"))
     parts = [
         f"学习目标：{runtime.learning_goal}",
         f"当前主题：{_bounded_text(values.get('topic'), 100)}",
@@ -191,6 +194,8 @@ def build_context_summary(
         f"最近错误：{_bounded_text(errors_text, 220)}",
         f"最新反馈：{_bounded_text(values.get('feedback') or '暂无', 180)}",
     ]
+    if memory_line:
+        parts.append(_bounded_text(memory_line, 120))
     return _bounded_text("\n".join(parts), MAX_CONTEXT_SUMMARY_LENGTH)
 
 

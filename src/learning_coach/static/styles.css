@@ -407,3 +407,25 @@ input[type="text"]:focus, textarea:focus { border-color: var(--teal); box-shadow
   .result-card { grid-template-columns: 1fr; }
   .score-orbit { margin: 0 auto; }
 }
+
+/* Time travel milestones */
+#milestone-list .milestone-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.68);
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+#milestone-list .milestone-item:last-child {
+  border-bottom: none;
+}
+
+#fork-banner {
+  color: #f0d39e;
+  font-size: 10px;
+  line-height: 1.5;
+}

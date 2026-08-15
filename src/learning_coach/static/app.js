@@ -28,6 +28,14 @@ const contextBudget = document.querySelector("#context-budget");
 const contextIngestion = document.querySelector("#context-ingestion");
 const contextRetrieval = document.querySelector("#context-retrieval");
 const contextEvents = document.querySelector("#context-events");
+const contextMemory = document.querySelector("#context-memory");
+const timeTravelPanel = document.querySelector("#time-travel");
+const forkBanner = document.querySelector("#fork-banner");
+const milestoneList = document.querySelector("#milestone-list");
+const approvalActions = document.querySelector("#approval-actions");
+const approveButton = document.querySelector("#approve-button");
+const rejectButton = document.querySelector("#reject-button");
+const learnerIdInput = document.querySelector("#learner-id");
 const conceptGraphCard = document.querySelector("#concept-graph-card");
 const conceptGraphMeta = document.querySelector("#concept-graph-meta");
 const conceptGraphNodes = document.querySelector("#concept-graph-nodes");
@@ -275,6 +283,9 @@ function learningEventsText(data) {
     teach: "讲解",
     prepare_practice: "练习准备",
     assess: "评价",
+    recall_memory: "记忆召回",
+    remember_session: "记忆保存",
+    approve_execution: "执行审批",
   };
   const kind =
     data.practice_kind === "code"
@@ -311,6 +322,10 @@ function updateContextInsight(data) {
     : "尚未摄取学习资料";
   contextRetrieval.textContent = retrievalText(data.retrieval_report);
   contextEvents.textContent = learningEventsText(data);
+  const memory = data.long_term_memory;
+  contextMemory.textContent = memory?.sessions
+    ? `长期记忆 ${memory.sessions} 次 · 平均 ${memory.average_score} 分${memory.last_topic ? ` · 上次：${memory.last_topic}` : ""}`
+    : "长期记忆将在会话开始后显示";
   if (data.graph_report?.graph_used) {
     contextRetrieval.textContent += ` · GraphRAG ${data.graph_report.prerequisites.length} 条前置路径`;
   }
@@ -321,9 +336,17 @@ function updateContextInsight(data) {
 
 function showQuestion(data, streamedTasks = new Set()) {
   updateContextInsight(data);
+  refreshMilestones();
+  approvalActions.hidden = data.stage !== "approval";
   if (data.stage === "diagnostic") {
     addMessage("coach", "诊断问题", data.question);
     setProgress("diagnostic");
+    return;
+  }
+
+  if (data.stage === "approval") {
+    addMessage("coach", "执行审批", `${data.question}\n\n请选择批准或拒绝；拒绝不会运行任何测试。`);
+    setProgress("assessment");
     return;
   }
 
@@ -348,6 +371,8 @@ function showQuestion(data, streamedTasks = new Set()) {
 
 function showResult(data) {
   updateContextInsight(data);
+  approvalActions.hidden = true;
+  refreshMilestones();
   if (data.feedback) {
     addMessage(
       "assessment",
@@ -373,6 +398,9 @@ startForm.addEventListener("submit", async (event) => {
   formData.append("topic", topicInput.value);
   if (learningGoalInput.value.trim()) {
     formData.append("learning_goal", learningGoalInput.value);
+  }
+  if (learnerIdInput.value.trim()) {
+    formData.append("learner_id", learnerIdInput.value);
   }
   if (imageInput.files[0]) formData.append("image", imageInput.files[0]);
   if (studyMaterialInput.value.trim()) {
@@ -415,12 +443,9 @@ startForm.addEventListener("submit", async (event) => {
   }
 });
 
-answerForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const answer = answerInput.value.trim();
-  if (!answer) return;
+async function submitAnswerStream(answer, echoLabel) {
   answerError.textContent = "";
-  addMessage("user", currentCodeExercise ? "你的代码" : "你的回答", answer);
+  if (echoLabel) addMessage("user", echoLabel, answer);
   answerInput.value = "";
   setProgress("assessment");
   setLoading(answerForm, true);
@@ -477,7 +502,82 @@ answerForm.addEventListener("submit", async (event) => {
     setLoading(answerForm, false);
     if (!answerCard.hidden) answerInput.focus();
   }
+}
+
+answerForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const answer = answerInput.value.trim();
+  if (!answer) return;
+  await submitAnswerStream(answer, currentCodeExercise ? "你的代码" : "你的回答");
 });
+
+approveButton.addEventListener("click", () => {
+  if (approvalActions.hidden) return;
+  submitAnswerStream("approve", "审批决定");
+});
+
+rejectButton.addEventListener("click", () => {
+  if (approvalActions.hidden) return;
+  submitAnswerStream("reject", "审批决定");
+});
+
+async function refreshMilestones() {
+  if (!sessionId) return;
+  try {
+    const milestones = await request(`/api/sessions/${sessionId}/history`);
+    timeTravelPanel.hidden = false;
+    milestoneList.replaceChildren();
+    for (const milestone of milestones.slice(0, 8)) {
+      const item = document.createElement("div");
+      item.className = "milestone-item";
+      const label = document.createElement("span");
+      const parts = [milestone.label];
+      if (milestone.score !== null && milestone.score !== undefined) {
+        parts.push(`${milestone.score} 分`);
+      }
+      if (milestone.attempts) parts.push(`第 ${milestone.attempts} 次评价`);
+      label.textContent = parts.join(" · ");
+      item.append(label);
+      if (milestone.forkable) {
+        const forkButton = document.createElement("button");
+        forkButton.type = "button";
+        forkButton.className = "text-button";
+        forkButton.textContent = "分叉";
+        forkButton.addEventListener("click", () => forkFromCheckpoint(milestone));
+        item.append(forkButton);
+      }
+      milestoneList.append(item);
+    }
+  } catch {
+    timeTravelPanel.hidden = true;
+  }
+}
+
+function comparisonText(comparison) {
+  const entries = Object.entries(comparison || {});
+  if (!entries.length) return "暂无差异";
+  return entries
+    .slice(0, 3)
+    .map(([field, diff]) => `${field}: ${JSON.stringify(diff.before)} → ${JSON.stringify(diff.after)}`)
+    .join("；");
+}
+
+async function forkFromCheckpoint(milestone) {
+  try {
+    const payload = await request(`/api/sessions/${sessionId}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkpoint_id: milestone.checkpoint_id }),
+    });
+    sessionId = payload.session.session_id;
+    forkBanner.hidden = false;
+    forkBanner.textContent = `已从「${milestone.label}」分叉出新会话 · 基线对比：${comparisonText(payload.comparison)}`;
+    if (payload.session.status === "completed") showResult(payload.session);
+    else showQuestion(payload.session);
+  } catch (error) {
+    answerError.textContent = errorDetail(error);
+  }
+}
 
 function cancelActiveRun() {
   activeController?.abort();

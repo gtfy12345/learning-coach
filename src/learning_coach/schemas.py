@@ -144,7 +144,14 @@ class LearningEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    node: Literal["teach", "prepare_practice", "assess"]
+    node: Literal[
+        "teach",
+        "prepare_practice",
+        "assess",
+        "recall_memory",
+        "remember_session",
+        "approve_execution",
+    ]
     status: Literal["completed"] = "completed"
     detail: str = Field(default="", max_length=200)
 
@@ -230,6 +237,33 @@ class ResearchEvidence(BaseModel):
     )
     selected_source_ids: list[str] = Field(default_factory=list, max_length=3)
     primary_focus: str = Field(default="", max_length=50)
+
+
+class LearnerMemoryView(BaseModel):
+    """Aggregated cross-session learner profile kept in the memory store."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sessions: int = Field(ge=0, le=500)
+    topics: list[str] = Field(default_factory=list, max_length=20)
+    average_score: int = Field(ge=0, le=100)
+    last_topic: str = Field(default="", max_length=100)
+    last_missing_point: str = Field(default="", max_length=200)
+    updated_at: str = Field(default="", max_length=40)
+
+
+class CheckpointMilestone(BaseModel):
+    """One safe projection of a session checkpoint for time travel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_id: str = Field(min_length=1, max_length=64)
+    node: str = Field(min_length=1, max_length=50)
+    label: str = Field(min_length=1, max_length=50)
+    stage: str = Field(min_length=1, max_length=30)
+    attempts: int | None = Field(default=None, ge=0, le=10)
+    score: int | None = Field(default=None, ge=0, le=100)
+    forkable: bool = False
 
 
 class CodePracticeReport(BaseModel):

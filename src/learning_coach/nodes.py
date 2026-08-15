@@ -9,6 +9,7 @@ from learning_coach.code_practice import (
     CodePracticeToolRegistry,
     DeterministicExerciseGenerator,
     RestrictedPythonExecutor,
+    _SAFETY_NOTICE,
     is_code_practice_topic,
 )
 from learning_coach.context import (
@@ -17,6 +18,7 @@ from learning_coach.context import (
     create_learning_runtime_context,
     merge_recent_errors,
 )
+from learning_coach.memory import execution_approval_enabled
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import (
@@ -24,9 +26,42 @@ from learning_coach.schemas import (
     Assessment,
     CodeExercise,
     CodeExerciseView,
+    CodeHint,
+    CodePracticeReport,
+    CodePracticeRun,
     LearningEvent,
+    ToolTraceEntry,
 )
 from learning_coach.state import LearningState
+
+_APPROVAL_ACCEPTED_VALUES = frozenset(
+    {"approve", "approved", "yes", "y", "true", "1", "ok", "批准"}
+)
+
+
+def approval_decision(answer: Any) -> bool:
+    """Normalize an approval resume value into a strict boolean."""
+
+    return str(answer or "").strip().lower() in _APPROVAL_ACCEPTED_VALUES
+
+
+def _execution_rejected_report(exercise: CodeExercise) -> CodePracticeReport:
+    return CodePracticeReport(
+        status="rejected",
+        error_type="policy_violation",
+        passed_tests=0,
+        total_tests=len(exercise.tests),
+        score=0,
+        outcomes=[],
+        hints=[
+            CodeHint(
+                level=1,
+                error_type="policy_violation",
+                text="执行未获批准：如需运行测试，请在审批提示中选择批准后重新提交代码。",
+            )
+        ],
+        safety_notice=_SAFETY_NOTICE,
+    )
 
 
 def route_after_assessment(state: LearningState) -> Literal["retry", "finish"]:
@@ -41,6 +76,9 @@ class LearningCoachNodes:
     """Nodes that perform one learning task and return partial state updates."""
 
     def __init__(self, models: LearningCoachModels | Any) -> None:
+        import os
+
+        self.execution_approval_enabled = execution_approval_enabled(os.environ)
         if isinstance(models, LearningCoachRunnables):
             self.runnables = models
         else:
@@ -225,6 +263,58 @@ class LearningCoachNodes:
         )
         return {"quiz_answer": str(answer)}
 
+    def approve_execution(self, state: LearningState) -> Command:
+        """Gate the only action that executes untrusted input.
+
+        Non-code sessions and disabled approval pass straight through; code
+        submissions pause on a stable approval interrupt before the restricted
+        executor ever starts a process.
+        """
+
+        code_exercise = state.get("code_exercise")
+        if not code_exercise or not self.execution_approval_enabled:
+            return Command(goto="assess", update={"execution_approved": True})
+        exercise = CodeExercise.model_validate(code_exercise)
+        answer = interrupt(
+            {
+                "kind": "approval",
+                "action": "run_code_tests",
+                "question": (
+                    "是否批准在本地受限执行器中运行你提交的代码？"
+                    "批准前不会启动任何进程。"
+                ),
+                "entrypoint": exercise.entrypoint,
+                "total_test_count": len(exercise.tests),
+                "visible_test_count": sum(
+                    1 for test in exercise.tests if test.visible
+                ),
+                "safety_notice": "受限执行器提供纵深防护，但不是强隔离沙箱。",
+            }
+        )
+        approved = approval_decision(answer)
+        self._write_event(
+            {
+                "event": "execution_approval",
+                "approved": approved,
+                "entrypoint": exercise.entrypoint,
+            }
+        )
+        return Command(
+            goto="assess",
+            update={
+                "execution_approved": approved,
+                "learning_events": [
+                    LearningEvent(
+                        node="approve_execution",
+                        detail=(
+                            f"{'已批准' if approved else '已拒绝'}运行代码测试"
+                            f" · 入口函数 {exercise.entrypoint}"
+                        ),
+                    ).model_dump(mode="json")
+                ],
+            },
+        )
+
     def assess(
         self,
         state: LearningState,
@@ -236,11 +326,27 @@ class LearningCoachNodes:
         code_run = None
         if code_exercise:
             exercise = CodeExercise.model_validate(code_exercise)
-            code_run = self.code_practice.evaluate(
-                exercise=exercise,
-                code=state["quiz_answer"],
-                tool_call_limit=learning_runtime.tool_call_limit,
-            )
+            if state.get("execution_approved", False):
+                code_run = self.code_practice.evaluate(
+                    exercise=exercise,
+                    code=state["quiz_answer"],
+                    tool_call_limit=learning_runtime.tool_call_limit,
+                )
+            else:
+                code_run = CodePracticeRun(
+                    tool_calls=0,
+                    tool_call_limit=0,
+                    termination_reason="not_applicable",
+                    report=_execution_rejected_report(exercise),
+                    trace=[
+                        ToolTraceEntry(
+                            step=1,
+                            tool_name="run_code_tests",
+                            status="rejected",
+                            observation="execution not approved by learner",
+                        )
+                    ],
+                )
             if code_run.report is None:
                 raise RuntimeError("代码实践工具没有返回执行报告。")
             report = code_run.report
