@@ -13,6 +13,8 @@
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [多 Agent 与任务编排](./multi-agent-orchestration/) | [implementation](./multi-agent-orchestration/implementation.md) / [checklist](./multi-agent-orchestration/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./multi-agent-orchestration/unit-test-plan.md) / [checklist](./multi-agent-orchestration/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [LangGraph 状态图进阶](./langgraph-advanced-state/) | [implementation](./langgraph-advanced-state/implementation.md) / [checklist](./langgraph-advanced-state/implementation-checklist.md) | 1.0 | 2026-08-15 |
 | ↳ 单元测试 | [test-plan](./langgraph-advanced-state/unit-test-plan.md) / [checklist](./langgraph-advanced-state/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice/) | [implementation](./tool-calling-react-code-practice/implementation.md) / [checklist](./tool-calling-react-code-practice/implementation-checklist.md) | 1.0 | 2026-08-15 |

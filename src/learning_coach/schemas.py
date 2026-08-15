@@ -149,6 +149,89 @@ class LearningEvent(BaseModel):
     detail: str = Field(default="", max_length=200)
 
 
+AgentName = Literal[
+    "orchestrator", "research", "teach", "review", "practice", "quiz"
+]
+ReviewDimension = Literal["grounding", "clarity", "alignment"]
+
+
+class ResearchFocus(BaseModel):
+    """One bounded research focus routed to a research worker via Send."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=50)
+    query: str = Field(min_length=1, max_length=300)
+
+
+class TeachingPlan(BaseModel):
+    """Bounded orchestrator decision for one teaching round."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    research_foci: list[ResearchFocus] = Field(
+        default_factory=list, max_length=3
+    )
+    review_dimensions: list[ReviewDimension] = Field(min_length=1, max_length=3)
+    revision_budget: int = Field(default=0, ge=0, le=1)
+    uses_research: bool = True
+
+    @model_validator(mode="after")
+    def validate_plan_consistency(self) -> "TeachingPlan":
+        if self.uses_research and not self.research_foci:
+            raise ValueError("uses_research 为 true 时至少需要一个研究焦点。")
+        if not self.uses_research and self.research_foci:
+            raise ValueError("uses_research 为 false 时不能携带研究焦点。")
+        if len(set(self.review_dimensions)) != len(self.review_dimensions):
+            raise ValueError("审查维度不能重复。")
+        return self
+
+
+class ReviewFinding(BaseModel):
+    """One deterministic review conclusion for a teaching draft."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: ReviewDimension
+    round: int = Field(ge=0, le=1)
+    passed: bool
+    detail: str = Field(default="", max_length=200)
+
+
+class AgentHandoff(BaseModel):
+    """One structured agent-to-agent transfer with bounded payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_agent: AgentName
+    to_agent: AgentName
+    payload: str = Field(default="", max_length=200)
+    reason: str = Field(default="", max_length=200)
+
+
+class ResearchFocusSummary(BaseModel):
+    """Compact per-focus research outcome safe for web display."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=50)
+    query: str = Field(min_length=1, max_length=300)
+    source_count: int = Field(ge=0, le=3)
+    quality: str = Field(default="", max_length=30)
+
+
+class ResearchEvidence(BaseModel):
+    """Merged research packet handed from research workers to the teacher."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    foci: list[ResearchFocusSummary] = Field(
+        default_factory=list, max_length=3
+    )
+    selected_source_ids: list[str] = Field(default_factory=list, max_length=3)
+    primary_focus: str = Field(default="", max_length=50)
+
+
 class CodePracticeReport(BaseModel):
     """Deterministic execution, grading and hint report."""
 

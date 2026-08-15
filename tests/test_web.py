@@ -139,6 +139,18 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
         "teach",
         "prepare_practice",
     }
+    assert second["teaching_plan"]["uses_research"] is False
+    assert second["teaching_plan"]["review_dimensions"] == [
+        "grounding",
+        "clarity",
+    ]
+    assert second["teaching_reviews"]
+    assert all(item["passed"] for item in second["teaching_reviews"])
+    handoff_targets = {
+        item["to_agent"] for item in second["agent_handoffs"]
+    }
+    assert "review" in handoff_targets
+    assert "quiz" in handoff_targets
 
     quiz = client.post(
         f"/api/sessions/{first['session_id']}/answers",

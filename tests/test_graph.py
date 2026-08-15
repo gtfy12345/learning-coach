@@ -7,6 +7,7 @@ from langgraph.types import Command
 from pydantic import ValidationError
 
 from learning_coach.graph import build_learning_graph
+from learning_coach.agents import build_teaching_swarm
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.runnables import LearningCoachRunnables
@@ -221,9 +222,10 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
         ),
     )
     nodes = LearningCoachNodes(tasks)
+    swarm = build_teaching_swarm(tasks)
 
     diagnostic = nodes.make_diagnostic({"topic": "LCEL"})
-    teaching = nodes.teach(
+    teaching = swarm.invoke(
         {
             "topic": "LCEL",
             **diagnostic,
@@ -243,6 +245,7 @@ def test_nodes_delegate_state_projection_to_runnables() -> None:
 
     assert diagnostic["diagnostic_question"] == "诊断 LCEL"
     assert teaching["explanation"] == "讲解 使用管道组合。"
+    assert teaching["teaching_plan"]["uses_research"] is False
     assert quiz["quiz_question"].startswith("练习")
     assert assessment.goto == "summarize"
     assert assessment.update["score"] == 90
@@ -305,6 +308,7 @@ def test_graph_streams_task_status_text_and_sources_before_final_state() -> None
             config=config,
             stream_mode=["custom", "values"],
             version="v2",
+            subgraphs=True,
         )
     )
     custom = [part["data"] for part in parts if part["type"] == "custom"]
@@ -492,8 +496,29 @@ def test_graph_finishes_after_two_failed_attempts_with_parallel_retry() -> None:
     assert result["score"] == 55
     assert result["summary"]
     assert model.assessment_calls == 2
+    event_details = [
+        event["detail"] for event in result["learning_events"]
+    ]
+    assert sum(
+        1 for detail in event_details if detail.startswith("讲解起草完成")
+    ) == 2
+    assert sum(1 for detail in event_details if detail.startswith("审查")) >= 2
     event_nodes = [event["node"] for event in result["learning_events"]]
     assert event_nodes.count("assess") == 2
-    assert event_nodes.count("teach") == 2
     assert event_nodes.count("prepare_practice") == 2
+    handoff_pairs = {
+        (item["from_agent"], item["to_agent"])
+        for item in result["agent_handoffs"]
+    }
+    assert ("orchestrator", "teach") in handoff_pairs
+    assert ("teach", "review") in handoff_pairs
+    assert ("review", "quiz") in handoff_pairs
+    assert ("practice", "quiz") in handoff_pairs
+    assert result["teaching_plan"]["uses_research"] is False
+    assert result["teaching_plan"]["review_dimensions"] == [
+        "grounding",
+        "alignment",
+        "clarity",
+    ]
+    assert len(result["teaching_reviews"]) >= 4
     assert result["recent_errors"] == ["缺口-1", "缺口-2"]

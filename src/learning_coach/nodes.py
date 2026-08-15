@@ -20,10 +20,10 @@ from learning_coach.context import (
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
 from learning_coach.schemas import (
+    AgentHandoff,
     Assessment,
     CodeExercise,
     CodeExerciseView,
-    GroundedTeaching,
     LearningEvent,
 )
 from learning_coach.state import LearningState
@@ -89,94 +89,6 @@ class LearningCoachNodes:
             update={"diagnostic_answer": str(answer), "attempts": 0},
         )
 
-    def teach(
-        self,
-        state: LearningState,
-        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
-    ) -> dict[str, Any]:
-        learning_runtime = self._runtime_context(state, runtime)
-        task_input = {
-            "topic": state["topic"],
-            "diagnostic_focus": state.get("diagnostic_focus", "暂无"),
-            "diagnostic_difficulty": state.get("diagnostic_difficulty", "暂无"),
-            "diagnostic_answer": state.get("diagnostic_answer", "暂无"),
-            "feedback": state.get("feedback", "暂无"),
-            "missing_point": state.get("missing_point", "暂无"),
-            "study_material": state.get("study_material", ""),
-            "study_chunks": state.get("study_chunks", []),
-            "learning_goal": learning_runtime.learning_goal,
-            "mastery_level": state.get("mastery_level", 0),
-            "recent_errors": state.get("recent_errors", []),
-            "context_summary": state.get("context_summary", ""),
-        }
-        self._write_status("teaching", "started")
-        text_parts: list[str] = []
-        sources: list[Any] = []
-        context_report: Any = None
-        retrieval_report: Any = None
-        graph_report: Any = None
-        for teaching in self.runnables.teach_stream(
-            task_input, learning_runtime
-        ):
-            if (
-                teaching.retrieval_report is not None
-                and retrieval_report is None
-            ):
-                retrieval_report = teaching.retrieval_report
-                self._write_event(
-                    {
-                        "event": "retrieval",
-                        "task": "teaching",
-                        "report": retrieval_report.model_dump(),
-                    }
-                )
-            if teaching.graph_report is not None and graph_report is None:
-                graph_report = teaching.graph_report
-                self._write_event(
-                    {
-                        "event": "knowledge_graph",
-                        "task": "teaching",
-                        "report": graph_report.model_dump(),
-                    }
-                )
-            if teaching.sources and not sources:
-                sources = list(teaching.sources)
-                self._write_event(
-                    {
-                        "event": "sources",
-                        "task": "teaching",
-                        "sources": [source.model_dump() for source in sources],
-                    }
-                )
-            if teaching.context_report is not None and context_report is None:
-                context_report = teaching.context_report
-            if teaching.text:
-                text_parts.append(teaching.text)
-                self._write_token("teaching", teaching.text)
-        self._write_status("teaching", "completed")
-        result: dict[str, Any] = {
-            "explanation": "".join(text_parts),
-            "explanation_sources": [
-                source.model_dump() for source in sources
-            ],
-            "context_summary": state.get("context_summary")
-            or build_context_summary(state, learning_runtime),
-        }
-        if context_report is not None:
-            result["context_report"] = context_report.model_dump()
-        if retrieval_report is not None:
-            result["retrieval_report"] = retrieval_report.model_dump()
-        if graph_report is not None:
-            result["graph_report"] = graph_report.model_dump()
-        result["learning_events"] = [
-            LearningEvent(
-                node="teach",
-                status="completed",
-                detail=f"讲解完成 · 参考来源 {len(sources)} 个",
-            ).model_dump(mode="json")
-        ]
-        return result
-
     def prepare_practice(
         self,
         state: LearningState,
@@ -226,6 +138,14 @@ class LearningCoachNodes:
         result["learning_events"] = [
             LearningEvent(
                 node="prepare_practice", status="completed", detail=detail
+            ).model_dump(mode="json")
+        ]
+        result["agent_handoffs"] = [
+            AgentHandoff(
+                from_agent="practice",
+                to_agent="quiz",
+                payload=detail,
+                reason="练习准备完成，移交出题",
             ).model_dump(mode="json")
         ]
         return result

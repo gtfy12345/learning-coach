@@ -35,14 +35,18 @@ from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
 from learning_coach.retrieval import normalize_study_material
 from learning_coach.schemas import (
+    AgentHandoff,
     CodeExercise,
     CodeExerciseView,
     CodePracticeReport,
     ContextReport,
     GraphRAGReport,
     LearningEvent,
+    ResearchEvidence,
     RetrievalReport,
+    ReviewFinding,
     StudySource,
+    TeachingPlan,
     ToolTraceEntry,
 )
 
@@ -121,6 +125,10 @@ class SessionView(BaseModel):
     explanation: str | None = None
     practice_kind: str | None = None
     learning_events: list[LearningEvent] = Field(default_factory=list)
+    teaching_plan: TeachingPlan | None = None
+    research_evidence: ResearchEvidence | None = None
+    teaching_reviews: list[ReviewFinding] = Field(default_factory=list)
+    agent_handoffs: list[AgentHandoff] = Field(default_factory=list)
     score: int | None = None
     feedback: str | None = None
     missing_point: str | None = None
@@ -414,13 +422,14 @@ class LearningSessionService:
                     config=config,
                     stream_mode=["custom", "values"],
                     version="v2",
+                    subgraphs=True,
                     context=self._runtime_contexts[session_id],
                 ):
                     if part["type"] == "custom":
                         event = dict(part["data"])
                         event_name = str(event.pop("event", "status"))
                         yield event_name, event
-                    elif part["type"] == "values":
+                    elif part["type"] == "values" and not part.get("ns"):
                         latest_state = dict(part["data"])
                         if part.get("interrupts"):
                             latest_interrupts = part["interrupts"]
@@ -502,6 +511,10 @@ class LearningSessionService:
                 explanation=state.get("explanation"),
                 practice_kind=state.get("practice_kind"),
                 learning_events=state.get("learning_events", []),
+                teaching_plan=state.get("teaching_plan"),
+                research_evidence=state.get("research_evidence"),
+                teaching_reviews=state.get("teaching_reviews", []),
+                agent_handoffs=state.get("agent_handoffs", []),
                 score=state.get("score"),
                 feedback=state.get("feedback"),
                 missing_point=state.get("missing_point"),
@@ -531,6 +544,10 @@ class LearningSessionService:
             explanation=state.get("explanation"),
             practice_kind=state.get("practice_kind"),
             learning_events=state.get("learning_events", []),
+            teaching_plan=state.get("teaching_plan"),
+            research_evidence=state.get("research_evidence"),
+            teaching_reviews=state.get("teaching_reviews", []),
+            agent_handoffs=state.get("agent_handoffs", []),
             score=state.get("score"),
             feedback=state.get("feedback"),
             missing_point=state.get("missing_point"),

@@ -265,7 +265,12 @@ function setProgress(stage, completed = false) {
 
 function learningEventsText(data) {
   const events = data.learning_events || [];
-  if (!events.length) return "并行执行轨迹将在诊断回答后显示";
+  const handoffs = data.agent_handoffs || [];
+  const reviews = data.teaching_reviews || [];
+  const plan = data.teaching_plan;
+  if (!events.length && !handoffs.length) {
+    return "Agent 并行轨迹将在诊断回答后显示";
+  }
   const labels = {
     teach: "讲解",
     prepare_practice: "练习准备",
@@ -277,11 +282,20 @@ function learningEventsText(data) {
       : data.practice_kind === "text"
         ? "文本练习"
         : "练习待定";
+  const foci = plan?.research_foci?.length
+    ? ` · 研究焦点 ${plan.research_foci.length}`
+    : "";
+  const reviewSummary = reviews.length
+    ? ` · 审查 ${reviews.filter((r) => r.passed).length}/${reviews.length} 通过`
+    : "";
   const parts = events.slice(-6).map((event) => {
     const label = labels[event.node] || event.node;
     return `${label}：${event.detail || event.status}`;
   });
-  return `${kind} · 并行轨迹（顺序不保证）：${parts.join("｜")}`;
+  return (
+    `${kind}${foci}${reviewSummary} · 交接 ${handoffs.length} 次` +
+    `（顺序不保证）：${parts.join("｜")}`
+  );
 }
 
 function updateContextInsight(data) {

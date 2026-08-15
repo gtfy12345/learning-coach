@@ -12,7 +12,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 flowchart LR
     A[输入学习主题] --> B[生成诊断题]
     B --> C[等待诊断回答]
-    C -->|Command fan-out| D[针对薄弱点讲解]
+    C -->|Command fan-out| D[多 Agent 讲解子图<br/>研究 · 教师 · 审查]
     C -->|并行| P[准备练习类型与代码练习]
     D --> Q[生成练习题]
     P --> Q
@@ -57,6 +57,9 @@ flowchart LR
 - LangGraph State、Node、Edge 和 Conditional Edge
 - Reducer 显式合并并行分支状态：错误增量去重合并与最多 30 条的并行事件轨迹
 - `Command` 导航：诊断回答后双分支并行 fan-out，评价后按阈值条件跳转
+- 多 Agent 教学子图：Router 制定有界计划，`Send` 按焦点与维度动态 fan-out 研究/审查 Agent
+- 子图作为 `teach` 节点接入，事件只回传增量；`AgentHandoff` 记录证据、草稿与审查意见的有界交接
+- 审查未通过时最多修订一次，预算耗尽后带意见接受，子图必然终止
 - 可与讲解并行的确定性练习准备节点和 fan-in 练习生成
 - 节点级 `RetryPolicy`：瞬态模型错误最多重试一次，配置与校验错误快速失败
 - 节点级 `CachePolicy`：相同主题与题图复用诊断结果，可用 `GRAPH_NODE_CACHE` 关闭
@@ -162,6 +165,7 @@ PYTHONPATH=src python -m learning_coach web
 - 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
 - 显示当前掌握度、学习摘要以及本轮模型/工具预算使用情况
 - 显示本轮练习类型与并行执行轨迹（标注并行顺序不保证）
+- 显示教学编排计划、研究焦点数、审查通过与 Agent 交接次数
 
 当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
 
@@ -389,6 +393,33 @@ GRAPH_NODE_CACHE=false
 
 重试与 LCEL 备用链会叠加：备用链先切换一次模型，节点重试再给一次整体机会，单节点最坏 4 次模型调用，仍然有界。`learning_events` 中的并行轨迹通过 Web 会话 JSON 与页面展示，明确标注跨分支顺序不保证。
 
+### 多 Agent 与任务编排
+
+第 10 阶段把讲解升级为一个有界的多 Agent 子图。`teach` 节点现在是一个编译后的 LangGraph 子图（Subgraph），内部由编排器和三类分工 Agent 组成，与确定性练习 Agent（`prepare_practice`）继续并行执行：
+
+```mermaid
+flowchart LR
+    P[编排器 plan_teaching · Router] -->|有资料| R[研究 Agent ×N · Send]
+    P -->|无资料| T[教师 Agent · teach_stream]
+    R --> S[证据汇合 · 去重合并]
+    S -->|prepared_retrieval| T
+    T --> D[审查分发 · Send]
+    D --> V[审查 Agent ×M · 确定性规则]
+    V --> A{通过?}
+    A -->|未通过且预算未用| T
+    A -->|通过或预算用尽| Q[make_quiz]
+```
+
+五个模式分别落在：
+
+- **Router**：`build_teaching_plan` 按学习上下文做确定性路由——没有学习资料时跳过研究 Agent 直接讲解；有资料时按诊断重点与最近错误生成最多 3 个研究焦点，按掌握度带与最近错误选择审查维度（`grounding` 必查，出现过失败轮次加 `alignment`，基础带加 `clarity`）。
+- **Send**：研究 worker 与审查 worker 的数量由计划在运行时决定，`Send` 为每个焦点/维度构造独立输入并行执行；并行写只发生在 `teaching_reviews`、`agent_handoffs` 和 `learning_events` 三个 Reducer 通道上。
+- **Orchestrator-Worker**：编排器制定有界计划（焦点 ≤ 3、维度 ≤ 3、修订预算 ≤ 1），worker 只读取计划与移交证据；证据汇合节点把各焦点来源去重合并（最多 3 个）并构造 `prepared_retrieval`。
+- **Subgraph**：子图作为主图 `teach` 节点接入，通过受限 `input_schema`/`output_schema` 与父图共享状态——事件类通道只回传增量，父图 Reducer 不会重复累加；子图内的 token/status 事件经 `subgraphs=True` 流式透出到 SSE。
+- **Handoff**：研究 → 教师（证据移交）、教师 → 审查（草稿移交）、审查 → 教师（审查意见交回修订，最多一次）、审查/练习 → 出题，全部记录为有界的 `AgentHandoff` 轨迹。
+
+只有教师 Agent 调用模型，且复用原有 `teach_stream`（保留中间件、备用链与流式行为）；研究 Agent 使用现有 Hybrid/Graph 检索器，审查 Agent 是三个确定性规则（证据术语重叠、草稿长度边界、缺口术语回应），不新增模型调用、Provider 或环境变量。审查未通过时意见并入教学反馈触发一次修订；修订后仍未通过则带意见接受，子图必然终止。Web 会话 JSON 与页面展示教学计划、研究摘要、审查结论和交接次数。
+
 也可以把模型切换到 Google Gemini：
 
 ```dotenv
@@ -561,6 +592,7 @@ learning-coach/
 │   └── learning_coach/
 │       ├── __init__.py
 │       ├── __main__.py
+│       ├── agents.py
 │       ├── auth.py
 │       ├── cli.py
 │       ├── cli_models.py
@@ -586,6 +618,7 @@ learning-coach/
 │       ├── state.py
 │       └── web.py
 └── tests/
+    ├── test_agents.py
     ├── test_auth.py
     ├── test_cli.py
     ├── test_cli_models.py
@@ -613,7 +646,8 @@ learning-coach/
 - `code_practice.py`：实现代码工具注册表、确定性练习、有界 ReAct、受限 Python 执行、错误分类和三级提示。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断、评价、代码实践和并行学习事件的 Pydantic 结构。
-- `nodes.py`：诊断、并行讲解与练习准备、出题、评价和总结节点。
+- `agents.py`：教学多 Agent 子图：编排计划 Router、研究/教师/审查 Agent、Send fan-out 与有界修订 Handoff。
+- `nodes.py`：诊断、练习准备、出题、评价和总结节点。
 - `runnables.py`：把 Prompt、模型、解析器和有限回退组合成可复用 LCEL 任务。
 - `retrieval.py`：把结构化资料 Chunk 和原有粘贴纯文本适配到共享 Hybrid Retriever。
 - `graph.py`：节点之间的固定边、Command 导航、并行 fan-out 和节点级 Retry/Cache 挂接。
@@ -672,6 +706,9 @@ learning-coach/
 - 节点缓存只覆盖诊断阶段且仅在本进程内生效；相同主题与题图会复用同一道诊断题，`GRAPH_NODE_CACHE=false` 可关闭，缓存不跨服务重启保留。
 - 节点重试只按异常类名白名单与内置超时/连接错误判定瞬态，每节点最多 2 次尝试；与 LCEL 备用链叠加时单节点最坏 4 次模型调用，且重试不能恢复确定性配置错误。
 - 并行事件轨迹 `learning_events` 只用于展示与测试断言，保留最近 30 条；跨分支的事件顺序不保证，业务逻辑不依赖其顺序。
+- 多 Agent 编排只覆盖讲解阶段：研究 Agent 复用会话内检索上限，审查 Agent 是确定性规则而非模型评审，教师修订至多一次；Agent 之间是结构化单向交接，不存在自由协商。
+- 工具型教学 Agent（真实 Tool Calling 模型）仍按需调用 `search_study_material` 检索；`prepared_retrieval` 证据注入只对 LCEL 教学路径生效。
+- `agent_handoffs` 与 `teaching_reviews` 是有界展示轨迹（20/9 条），不承担业务语义，也不携带资料正文。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。
 - 外层仍是确定性 Workflow；Agent 只在讲解任务内部从两个只读工具中选择，并受到模型/工具预算和 LangGraph 补救次数的双重上限。
