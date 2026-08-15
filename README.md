@@ -6,7 +6,7 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ## 当前实现
 
-项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取、自校正 Hybrid RAG 与 GraphRAG 知识前置图扩展：
+项目已经跑通第一条教学工作流，并完成模型层、LCEL 任务层、Context Engineering、多模态学习资料摄取、自校正 Hybrid RAG、GraphRAG 知识前置图与代码实践扩展：
 
 ```mermaid
 flowchart LR
@@ -39,6 +39,9 @@ flowchart LR
 - 可追溯的通道分数、检索尝试与安全降级报告，以及 Runnable 图导出
 - 默认离线的实体关系抽取、别名消歧、概念图和可注入结构化模型增强
 - 有界前置图遍历、图与 Hybrid RRF 融合及“为什么要先补这个概念”的证据链
+- 带 Pydantic 参数 Schema 的 `generate_code_exercise` 与 `run_code_tests` 工具
+- 阶段感知的动态工具选择、重复 Action 检测和最多 3 步的有界 ReAct
+- 受限 Python 测试执行、确定性评分、错误分类和由浅入深的三级提示
 - Runnable 的同步、异步、批处理与流式执行，以及 Web SSE、取消和超时
 - 默认关闭的 LangSmith 任务追踪标签与安全元数据
 - `LearningRuntimeContext` 中一次会话不可变的学习目标与模型/工具预算
@@ -144,6 +147,8 @@ PYTHONPATH=src python -m learning_coach web
 - 显示 GraphRAG 概念节点、带方向关系、前置路径、补课原因和来源位置
 - 提交诊断回答，查看针对性讲解和迁移练习
 - 提交练习答案，查看结构化评分、反馈和知识缺口
+- 对 Python、代码、编程、函数或算法主题生成函数练习，提交代码后运行服务端测试
+- 显示 Starter Code、测试通过数、错误类型、三级提示和安全执行说明
 - 未达到 80 分时自动补讲并继续出题，最多评价两次
 - 完成后展示最终得分与学习小结
 - 通过 SSE 增量展示讲解、练习和小结，并可停止当前生成
@@ -161,7 +166,7 @@ PYTHONPATH=src python -m learning_coach web
 | `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
-| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、knowledge_graph、state 和 done 事件 |
+| `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、knowledge_graph、code_practice、state 和 done 事件 |
 
 两个原 JSON 接口继续保留。浏览器默认使用 POST SSE 接口，通过 Fetch 读取事件流，并用 `AbortController` 停止当前请求。服务端单次图运行默认最多 120 秒，可以调整：
 
@@ -311,6 +316,42 @@ flowchart LR
 图谱与遍历都有硬上限：每次最多分析 24 个 Chunk、每个读取 4,000 字符，图中最多 80 个节点和 160 条关系；反向 BFS 深度最多 3、最多访问 24 个节点、最多返回 5 条前置路径，并使用 visited 和当前路径集合阻止环。图证据按路径距离、关系置信度和查询匹配排名，再与 Hybrid 排名做 RRF；最终仍最多返回 3 个来源。无有效关系、无种子或图增强失败时，原 Hybrid 来源与检索报告保持可用。
 
 `GraphRAGReport` 只保存安全、有界的节点、关系、种子、扩展节点、路径和来源位置，不保存向量、密钥、异常正文或未选中全文。概念图是从 `StudyChunkRecord` 派生的运行时状态，不回写原文件、Chunk 或增量索引。当前实现不引入图数据库，也不跨会话持久化概念图。
+
+### Tool Calling、ReAct 与代码实践
+
+第 8 阶段把“做一道练习”扩展为可执行、可追溯的代码实践。只有学习主题显式包含 Python、代码、编程、函数或算法关键词时才进入代码路径；其他主题仍使用原 LCEL 文本练习与结构化模型评价。工具预算为零时同样保留文本兼容路径。
+
+代码实践使用两个带 Pydantic 参数 Schema 的 LangChain Tool：
+
+- `generate_code_exercise` 根据主题生成一个单函数 Python 练习、Starter Code 和服务端测试。
+- `run_code_tests` 接收服务端保存的练习与学习者代码，在受限子进程中运行测试并返回结构化报告。
+
+阶段感知注册表在生成阶段只开放第一个工具，在评价阶段且练习存在时才开放第二个工具。有界 ReAct 控制器记录 Action 与安全 Observation，同一 Action 不重复执行；工具不存在、参数非法、任务完成或预算耗尽都会立即终止。代码实践内部最多 3 次工具调用，同时受 `LearningRuntimeContext.tool_call_limit` 的更小值约束，因此不会形成开放式 Agent 循环。
+
+```mermaid
+flowchart LR
+    S[学习 State] --> D{代码主题且有工具预算?}
+    D -->|否| L[原文本练习与模型评价]
+    D -->|是| G[generate_code_exercise]
+    G --> I[interrupt 等待代码]
+    I --> T[run_code_tests]
+    T --> E[AST 策略 + 受限子进程]
+    E --> R[测试报告与确定性评分]
+    R --> H[三级提示]
+    R --> X[补救或总结]
+```
+
+本地执行器先做 AST 校验，拒绝 import、文件访问、动态执行、反射、dunder/私有属性和直接输出；随后在一次性临时目录中使用当前 Python 的 `-I -S` 模式、最小环境、墙钟超时以及 CPU、内存、文件、进程和描述符限制运行服务端测试。报告会截断并过滤异常，只返回安全摘要，不包含临时绝对路径、环境变量或隐藏测试输入。
+
+执行结果分为 `syntax_error`、`policy_violation`、`timeout`、`resource_limit`、`runtime_error` 和 `test_failure`；全部通过时错误类型为 `none`。分数只按测试通过比例确定，不由模型自由文本改写。失败时依次返回：
+
+1. 一级提示：指出排查方向。
+2. 二级提示：给出安全、有限的错误定位线索。
+3. 三级提示：给出修复范式，但不直接提供完整答案。
+
+隐藏测试仍保存在 LangGraph State 的服务端练习对象中，Web 只收到标题、说明、入口函数、Starter Code 和测试数量。`code_practice` SSE 事件及会话 JSON 可以返回测试状态、错误分类、提示和工具轨迹，但不会返回隐藏测试参数与期望值。
+
+安全边界：这个执行器适用于本地、单用户的教学演示，通过多层限制降低误操作风险，但它不是强隔离沙箱，不能安全承载恶意代码或多租户公网判题。生产环境应替换为容器、微虚拟机或专用隔离执行服务；项目也不会执行用户上传到学习资料中的代码。
 
 也可以把模型切换到 Google Gemini：
 
@@ -487,6 +528,7 @@ learning-coach/
 │       ├── auth.py
 │       ├── cli.py
 │       ├── cli_models.py
+│       ├── code_practice.py
 │       ├── context.py
 │       ├── graph.py
 │       ├── hybrid_rag.py
@@ -530,6 +572,7 @@ learning-coach/
 - `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
 - `hybrid_rag.py`：实现本地/Provider Embedding、BM25、Dense、RRF、重排、质量判断和有界查询改写。
 - `knowledge_graph.py`：实现实体关系抽取、别名消歧、概念图、有界前置遍历、图证据排名和 GraphRAG 包装器。
+- `code_practice.py`：实现代码工具注册表、确定性练习、有界 ReAct、受限 Python 执行、错误分类和三级提示。
 - `middleware.py`：动态 Prompt、工具筛选、模型路由与有界讲解 Agent。
 - `schemas.py`：诊断和评价必须返回的 Pydantic 结构。
 - `nodes.py`：诊断、讲解、出题、评价和总结节点。
@@ -583,6 +626,9 @@ learning-coach/
 - 确定性质量阈值是检索启发式指标，不保证资料事实正确，也不能替代人工核验；证据不足的第二轮仍会按上限终止。
 - 默认 GraphRAG 只识别显式句式、标题和代码标识符，可能漏掉隐含关系；模型增强只有显式注入才启用，并仍需人工核验抽取关系。
 - 概念图只存在于当前会话 State，不引入图数据库；前置解释表示“资料声明了这条依赖路径”，不等同于系统客观测得了学习者掌握状态。
+- 代码实践首版只支持单文件 Python 函数题，不允许 import、文件、网络、包安装、Shell、多文件工程或交互式 stdin。
+- 本地受限执行器不是强隔离沙箱，不用于恶意代码、多租户或公网判题；上传的资料代码始终只读取、不执行。
+- 代码评分只表示当前服务端测试的通过比例，不等同于完整代码质量、安全性或真实掌握程度。
 - SSE 取消依赖本地请求断开传播，不是跨进程任务取消协议；超时只约束单次 Web 图运行。
 - CLI Provider 依赖本机已安装且已登录的官方程序；Gemini CLI 的 schema 回退弱于原生 Structured Output。
 - CLI 登录模式只接受本地图片，不下载远程图片 URL。

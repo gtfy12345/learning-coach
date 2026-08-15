@@ -9,12 +9,12 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
-| [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice/) | [implementation](./tool-calling-react-code-practice/implementation.md) / [checklist](./tool-calling-react-code-practice/implementation-checklist.md) | 1.0 | 2026-08-15 |
-| ↳ 单元测试 | [test-plan](./tool-calling-react-code-practice/unit-test-plan.md) / [checklist](./tool-calling-react-code-practice/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [Tool Calling、ReAct 与代码实践](./tool-calling-react-code-practice/) | [implementation](./tool-calling-react-code-practice/implementation.md) / [checklist](./tool-calling-react-code-practice/implementation-checklist.md) | 1.0 | 2026-08-15 |
+| ↳ 单元测试 | [test-plan](./tool-calling-react-code-practice/unit-test-plan.md) / [checklist](./tool-calling-react-code-practice/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [GraphRAG 与知识前置图](./graphrag-prerequisite-graph/) | [implementation](./graphrag-prerequisite-graph/implementation.md) / [checklist](./graphrag-prerequisite-graph/implementation-checklist.md) | 1.0 | 2026-08-15 |
 | ↳ 单元测试 | [test-plan](./graphrag-prerequisite-graph/unit-test-plan.md) / [checklist](./graphrag-prerequisite-graph/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [自校正 Hybrid RAG](./self-corrective-hybrid-rag/) | [implementation](./self-corrective-hybrid-rag/implementation.md) / [checklist](./self-corrective-hybrid-rag/implementation-checklist.md) | 1.0 | 2026-08-14 |

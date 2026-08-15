@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-15](2026-08-15.md) | `feat(code-practice): 完成有界代码实践交付` | #feat #docs |
 | [2026-08-15](2026-08-15.md) | `fix(code-practice): 收紧代码主题判定` | #fix |
 | [2026-08-15](2026-08-15.md) | `feat(code-practice): 接入学习流程与 web` | #feat #ui |
 | [2026-08-15](2026-08-15.md) | `feat(code-practice): 错误分类与分级提示` | #feat |

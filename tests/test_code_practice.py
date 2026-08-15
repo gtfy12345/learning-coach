@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -316,3 +317,25 @@ def test_missing_runner_result_is_classified_as_resource_limit(
     assert report.status == "error"
     assert [hint.level for hint in report.hints] == [1, 2, 3]
     assert "killed" not in report.model_dump_json()
+
+
+def test_public_docs_describe_code_practice_and_sandbox_boundary() -> None:
+    readme = (Path(__file__).parents[1] / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    for term in (
+        "generate_code_exercise",
+        "run_code_tests",
+        "有界 ReAct",
+        "syntax_error",
+        "policy_violation",
+        "timeout",
+        "resource_limit",
+        "runtime_error",
+        "test_failure",
+        "三级提示",
+        "code_practice",
+        "不是强隔离沙箱",
+    ):
+        assert term in readme
