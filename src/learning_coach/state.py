@@ -6,6 +6,7 @@ MAX_LEARNING_EVENTS = 30
 MAX_TEACHING_REVIEWS = 9
 MAX_AGENT_HANDOFFS = 20
 MAX_RESEARCH_FINDINGS = 6
+MAX_SAFETY_FINDINGS = 10
 
 
 def append_learning_events(
@@ -44,6 +45,15 @@ def append_research_findings(
     return merged[-MAX_RESEARCH_FINDINGS:]
 
 
+def append_safety_findings(
+    existing: list[dict[str, Any]], updates: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Reducer: merge PII/injection findings and keep the latest slice."""
+
+    merged = [*existing, *(updates or [])]
+    return merged[-MAX_SAFETY_FINDINGS:]
+
+
 class LearningState(TypedDict, total=False):
     """The explicit state shared by every node in the learning workflow."""
 
@@ -64,6 +74,8 @@ class LearningState(TypedDict, total=False):
         list[dict[str, Any]], append_teaching_reviews
     ]
     agent_handoffs: Annotated[list[dict[str, Any]], append_agent_handoffs]
+    safety_findings: Annotated[list[dict[str, Any]], append_safety_findings]
+    stage_report: dict[str, Any]
     context_summary: str
     context_report: dict[str, Any]
     diagnostic_images: list[dict[str, Any]]

@@ -21,6 +21,10 @@ from learning_coach.context import (
 from learning_coach.memory import execution_approval_enabled
 from learning_coach.model import LearningCoachModels
 from learning_coach.runnables import LearningCoachRunnables
+from learning_coach.security import (
+    inspect_content_safety,
+    safety_findings_updates,
+)
 from learning_coach.schemas import (
     AgentHandoff,
     Assessment,
@@ -122,9 +126,14 @@ class LearningCoachNodes:
                 "question": state["diagnostic_question"],
             }
         )
+        safety = inspect_content_safety(str(answer), source="diagnostic_answer")
         return Command(
             goto=["teach", "prepare_practice"],
-            update={"diagnostic_answer": str(answer), "attempts": 0},
+            update={
+                "diagnostic_answer": str(answer),
+                "attempts": 0,
+                "safety_findings": safety_findings_updates(safety),
+            },
         )
 
     def prepare_practice(
@@ -249,7 +258,7 @@ class LearningCoachNodes:
         self._write_status("quiz", "completed")
         return {"quiz_question": question}
 
-    def collect_quiz(self, state: LearningState) -> dict[str, str]:
+    def collect_quiz(self, state: LearningState) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "kind": "quiz",
             "question": state["quiz_question"],
@@ -261,7 +270,11 @@ class LearningCoachNodes:
         answer = interrupt(
             payload
         )
-        return {"quiz_answer": str(answer)}
+        safety = inspect_content_safety(str(answer), source="quiz_answer")
+        return {
+            "quiz_answer": str(answer),
+            "safety_findings": safety_findings_updates(safety),
+        }
 
     def approve_execution(self, state: LearningState) -> Command:
         """Gate the only action that executes untrusted input.

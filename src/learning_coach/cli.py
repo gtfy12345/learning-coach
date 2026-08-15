@@ -129,7 +129,33 @@ def run(
 
     print("\n学习小结")
     print(result["summary"])
+    stage_report = result.get("stage_report")
+    if stage_report:
+        print("\n阶段报告")
+        print(stage_report.get("summary", ""))
+        mastery = stage_report.get("mastery") or {}
+        weak = [
+            concept.get("name")
+            for concept in mastery.get("concepts", [])
+            if concept.get("band") == "weak"
+        ]
+        if weak:
+            print(f"薄弱概念：{'、'.join(weak)}")
+        for step in mastery.get("recommended_next", [])[:2]:
+            print(f"下一步：{step}")
     return result
+
+
+def _run_evaluate_cli() -> None:
+    from learning_coach.evaluation import evaluate_retrieval
+
+    report = evaluate_retrieval()
+    print("Learning Coach 离线检索评估（评估集固定，零模型调用）")
+    print(f"查询数 {len(report.cases)} · hit@3 {report.hit_rate:.2f} · MRR {report.mrr:.2f}")
+    for case in report.cases:
+        status = "命中" if case.hit else "未命中"
+        rank = f"第 {round(1 / case.reciprocal_rank)} 位" if case.reciprocal_rank else "—"
+        print(f"  [{status}] {case.case_id} · {case.query} · {rank}")
 
 
 def _run_auth_cli(arguments: Sequence[str]) -> None:
@@ -181,6 +207,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if arguments and arguments[0] == "web":
         _run_web_cli(arguments[1:])
+        return
+    if arguments and arguments[0] == "evaluate":
+        _run_evaluate_cli()
         return
 
     parser = argparse.ArgumentParser(

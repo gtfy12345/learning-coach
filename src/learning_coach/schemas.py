@@ -266,6 +266,119 @@ class CheckpointMilestone(BaseModel):
     forkable: bool = False
 
 
+PIIKind = Literal["email", "phone", "cn_id", "ip_address", "credit_card"]
+
+
+class PIIFinding(BaseModel):
+    """One bounded PII kind with its match count; no matched text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: PIIKind
+    count: int = Field(ge=1, le=100)
+
+
+class ContentSafetyReport(BaseModel):
+    """Deterministic PII/injection marking for one piece of content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1, max_length=50)
+    pii_findings: list[PIIFinding] = Field(default_factory=list, max_length=10)
+    injection_findings: list[str] = Field(
+        default_factory=list, max_length=10
+    )
+
+
+class ConceptMastery(BaseModel):
+    """One concept with a derived mastery band and bounded evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=50)
+    band: Literal["introduced", "practiced", "weak"]
+    evidence: str = Field(default="", max_length=200)
+
+
+class MasteryMap(BaseModel):
+    """Concept-level mastery projection derived from session signals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    concepts: list[ConceptMastery] = Field(default_factory=list, max_length=8)
+    focus_gaps: list[str] = Field(default_factory=list, max_length=3)
+    recommended_next: list[str] = Field(default_factory=list, max_length=3)
+
+
+class RetrievalCaseResult(BaseModel):
+    """One evaluation query with hit@3 and reciprocal rank."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str = Field(min_length=1, max_length=50)
+    query: str = Field(min_length=1, max_length=300)
+    hit: bool
+    reciprocal_rank: float = Field(ge=0.0, le=1.0)
+
+
+class RetrievalEvalReport(BaseModel):
+    """Aggregated offline retrieval evaluation over the evaluation set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cases: list[RetrievalCaseResult] = Field(
+        default_factory=list, max_length=32
+    )
+    hit_rate: float = Field(ge=0.0, le=1.0)
+    mrr: float = Field(ge=0.0, le=1.0)
+
+
+class TrajectoryCheck(BaseModel):
+    """One structural invariant checked against a finished session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=50)
+    passed: bool
+    detail: str = Field(default="", max_length=200)
+
+
+class TrajectoryEvalReport(BaseModel):
+    """All trajectory invariants for one finished session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    checks: list[TrajectoryCheck] = Field(default_factory=list, max_length=12)
+    passed: bool = True
+
+
+class RunTelemetry(BaseModel):
+    """Safe per-session observability counters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    learning_event_count: int = Field(ge=0, le=60)
+    handoff_count: int = Field(ge=0, le=40)
+    review_count: int = Field(ge=0, le=18)
+    review_pass_count: int = Field(ge=0, le=18)
+    attempts: int = Field(ge=0, le=5)
+    retrieval_attempts: int = Field(ge=0, le=8)
+    safety_finding_count: int = Field(ge=0, le=20)
+    practice_kind: str = Field(default="text", max_length=20)
+
+
+class StageReport(BaseModel):
+    """Final per-session delivery report aggregating all signals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mastery: MasteryMap
+    trajectory: TrajectoryEvalReport
+    telemetry: RunTelemetry
+    safety_finding_count: int = Field(ge=0, le=20)
+    summary: str = Field(default="", max_length=400)
+
+
 class CodePracticeReport(BaseModel):
     """Deterministic execution, grading and hint report."""
 

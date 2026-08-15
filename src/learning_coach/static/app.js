@@ -386,6 +386,23 @@ function showResult(data) {
   document.querySelector("#result-feedback").textContent = data.feedback || "暂无";
   document.querySelector("#result-missing").textContent = data.missing_point || "暂无";
   document.querySelector("#result-summary").textContent = data.summary || "暂无";
+  const stageCard = document.querySelector("#stage-report-card");
+  const report = data.stage_report;
+  if (report) {
+    stageCard.hidden = false;
+    document.querySelector("#stage-report-summary").textContent = report.summary || "";
+    const bands = { weak: "薄弱", practiced: "已练", introduced: "引入" };
+    const mastery = (report.mastery?.concepts || [])
+      .slice(0, 6)
+      .map((concept) => `${concept.name}（${bands[concept.band] || concept.band}）`)
+      .join("、");
+    document.querySelector("#stage-report-mastery").textContent =
+      mastery ? `掌握图谱：${mastery}` : "掌握图谱：暂无概念";
+    const next = (report.mastery?.recommended_next || []).slice(0, 2).join("；");
+    document.querySelector("#stage-report-next").textContent = next ? `下一步：${next}` : "";
+  } else {
+    stageCard.hidden = true;
+  }
   setProgress("summary", true);
   resultCard.scrollIntoView({ behavior: "smooth", block: "center" });
 }

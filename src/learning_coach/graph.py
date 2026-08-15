@@ -8,6 +8,7 @@ from langgraph.types import CachePolicy, RetryPolicy
 
 from learning_coach.agents import build_teaching_swarm, resolve_teaching_retriever
 from learning_coach.context import LearningRuntimeContext
+from learning_coach.evaluation import build_stage_report_node
 from learning_coach.memory import recall_memory_node, remember_session_node
 from learning_coach.nodes import LearningCoachNodes
 from learning_coach.resilience import (
@@ -94,6 +95,7 @@ def build_learning_graph(
     )
     builder.add_node("summarize", nodes.summarize, retry_policy=retry)
     builder.add_node("remember_session", remember_session_node)
+    builder.add_node("build_stage_report", build_stage_report_node)
 
     builder.add_edge(START, "recall_memory")
     builder.add_edge("recall_memory", "make_diagnostic")
@@ -103,7 +105,8 @@ def build_learning_graph(
     builder.add_edge("make_quiz", "collect_quiz")
     builder.add_edge("collect_quiz", "approve_execution")
     builder.add_edge("summarize", "remember_session")
-    builder.add_edge("remember_session", END)
+    builder.add_edge("remember_session", "build_stage_report")
+    builder.add_edge("build_stage_report", END)
 
     return builder.compile(
         checkpointer=checkpointer or InMemorySaver(),

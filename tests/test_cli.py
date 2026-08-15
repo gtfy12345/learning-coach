@@ -191,3 +191,13 @@ def test_main_accepts_repeatable_material_arguments(monkeypatch) -> None:
 def test_material_sources_reject_missing_file() -> None:
     with pytest.raises(ValueError, match="找不到学习资料"):
         material_inputs_from_sources(["/missing/private/secret.txt"])
+
+
+def test_evaluate_subcommand_prints_offline_metrics(capsys) -> None:
+    cli.main(["evaluate"])
+
+    output = capsys.readouterr().out
+    assert "hit@3" in output
+    assert "MRR" in output
+    assert "离线检索评估" in output
+    assert "零模型调用" in output
