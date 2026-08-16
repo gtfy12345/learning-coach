@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from learning_coach.cli_models import create_cli_chat_model
 from learning_coach.schemas import Diagnostic
@@ -35,6 +36,15 @@ def test_codex_cli_plain_invocation_uses_logged_in_cli_and_last_message_file() -
     assert args[:2] == ["/usr/bin/codex", "exec"]
     assert ["--model", "gpt-test"] == args[args.index("--model") : args.index("--model") + 2]
     assert "--ephemeral" in args
+    assert args[args.index("--sandbox") : args.index("--sandbox") + 2] == [
+        "--sandbox",
+        "read-only",
+    ]
+    assert args[args.index("-c") : args.index("-c") + 2] == [
+        "-c",
+        'approval_policy="never"',
+    ]
+    assert "--ask-for-approval" not in args
     assert kwargs["input"].startswith("<system>\n你是教练")
 
 
@@ -42,6 +52,7 @@ def test_codex_cli_structured_output_uses_output_schema() -> None:
     def runner(args, **kwargs):
         schema_path = Path(args[args.index("--output-schema") + 1])
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        assert schema["additionalProperties"] is False
         assert schema["properties"]["difficulty"]["enum"] == [
             "foundation",
             "application",
@@ -70,6 +81,42 @@ def test_codex_cli_structured_output_uses_output_schema() -> None:
     result = model.invoke("生成诊断题")
 
     assert result.focus == "条件路由"
+
+
+def test_codex_cli_structured_output_forbids_nested_additional_properties() -> None:
+    class NestedDiagnostic(BaseModel):
+        diagnostic: Diagnostic
+
+    def runner(args, **kwargs):
+        schema_path = Path(args[args.index("--output-schema") + 1])
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        assert schema["additionalProperties"] is False
+        assert schema["$defs"]["Diagnostic"]["additionalProperties"] is False
+        output_path = Path(args[args.index("--output-last-message") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "diagnostic": {
+                        "question": "什么是条件边？",
+                        "focus": "条件路由",
+                        "difficulty": "foundation",
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return completed(args)
+
+    model = create_cli_chat_model(
+        "codex_cli:gpt-test",
+        runner=runner,
+        executable_resolver=lambda name: f"/usr/bin/{name}",
+    ).with_structured_output(NestedDiagnostic, method="json_schema")
+
+    result = model.invoke("生成嵌套诊断结果")
+
+    assert result.diagnostic.focus == "条件路由"
 
 
 def test_claude_code_structured_output_reads_structured_output_field() -> None:

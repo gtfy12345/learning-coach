@@ -21,6 +21,7 @@
 
 | ID | 标题 | 严重度 | 状态 | 发现日期 | 关联 Commit |
 |----|------|--------|------|----------|-------------|
+| [BUG-0002](./BUG-0002.md) | Codex CLI 升级导致 Web 模型调用失败 | high | resolved | 2026-08-17 | `fix(cli): restore Codex exec compatibility (BUG-0002)` |
 
 ## Web UI
 

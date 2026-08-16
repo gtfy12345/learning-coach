@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-17](./2026-08-17-official-cli-login-follow-up-codex-exec-compatibility-assessment.md) | Codex CLI Exec 兼容性 Follow-up 交付复盘 | #assessment |
 | [2026-08-16](./2026-08-16-evaluation-security-delivery-follow-up-contract-hardening-assessment.md) | 收官审计契约加固 Follow-up 交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-evaluation-security-delivery-assessment.md) | 评价、安全与完整交付复盘 | #assessment |
 | [2026-08-15](./2026-08-15-memory-time-travel-assessment.md) | 记忆、暂停恢复与 Time Travel 交付复盘 | #assessment |

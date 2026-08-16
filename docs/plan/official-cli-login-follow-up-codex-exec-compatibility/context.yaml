@@ -1,0 +1,42 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: official-cli-login-follow-up-codex-exec-compatibility
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - Codex CLI exec compatibility
+      - 官方 CLI 登录兼容性
+      - codex_cli 运行失败
+    keywords:
+      - 本次模型运行失败
+      - unexpected argument --ask-for-approval
+      - codex exec
+      - approval_policy
+      - run_failed
+    relatedSpecs:
+      - ../../spec/official-cli-login-follow-up-codex-exec-compatibility-design.md
+      - ../../spec/lcel-runnable-task-layer-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/official-cli-login-follow-up-codex-exec-compatibility-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../../reports/2026-08-09-cli-login-authentication-assessment.md
+        - ../lcel-runnable-task-layer/implementation.md
+        - ../../spec/lcel-runnable-task-layer-design.md
+      discovery:
+        packages:
+          - src/learning_coach/cli_models.py
+          - tests/test_cli_models.py
+        apiNames:
+          - create_cli_chat_model
+          - CliChatModel._invoke_codex
+        commands:
+          - codex exec
+          - python -m pytest

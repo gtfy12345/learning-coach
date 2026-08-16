@@ -8,6 +8,7 @@
 
 | 文档 | 版本 | 状态 | 更新日期 |
 |------|------|------|----------|
+| [Codex CLI Exec 兼容性修复](./official-cli-login-follow-up-codex-exec-compatibility-design.md) | 1.0 | completed | 2026-08-17 |
 | [收官审计契约加固](./evaluation-security-delivery-follow-up-contract-hardening-design.md) | 1.0 | completed | 2026-08-16 |
 | [评价、安全与完整交付](./evaluation-security-delivery-design.md) | 1.0 | completed | 2026-08-15 |
 | [记忆、暂停恢复与 Time Travel](./memory-time-travel-design.md) | 1.0 | completed | 2026-08-15 |

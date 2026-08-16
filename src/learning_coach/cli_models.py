@@ -157,6 +157,20 @@ def _safe_environment(spec: CliProviderSpec) -> dict[str, str]:
     return environment
 
 
+def _codex_output_schema(schema: type[BaseModel]) -> dict[str, Any]:
+    document = schema.model_json_schema()
+    pending: list[Any] = [document]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                value["additionalProperties"] = False
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return document
+
+
 def _safe_error(stderr: str, stdout: str) -> str:
     message = (stderr or stdout or "未知错误").strip().replace("\x00", "")
     return message[:500]
@@ -293,8 +307,8 @@ class CliChatModel:
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
+            "-c",
+            'approval_policy="never"',
             "--color",
             "never",
             "--output-last-message",
@@ -305,7 +319,7 @@ class CliChatModel:
         if schema is not None:
             schema_path = temp_dir / "schema.json"
             schema_path.write_text(
-                json.dumps(schema.model_json_schema(), ensure_ascii=False),
+                json.dumps(_codex_output_schema(schema), ensure_ascii=False),
                 encoding="utf-8",
             )
             args.extend(["--output-schema", str(schema_path)])

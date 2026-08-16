@@ -14,6 +14,8 @@
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [Codex CLI Exec 兼容性 Follow-up](./official-cli-login-follow-up-codex-exec-compatibility/) | [implementation](./official-cli-login-follow-up-codex-exec-compatibility/implementation.md) / [checklist](./official-cli-login-follow-up-codex-exec-compatibility/implementation-checklist.md) | 1.0 | 2026-08-17 |
+| ↳ 单元测试 | [test-plan](./official-cli-login-follow-up-codex-exec-compatibility/unit-test-plan.md) / [checklist](./official-cli-login-follow-up-codex-exec-compatibility/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 | [收官审计契约加固 Follow-up](./evaluation-security-delivery-follow-up-contract-hardening/) | [implementation](./evaluation-security-delivery-follow-up-contract-hardening/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-contract-hardening/implementation-checklist.md) | 1.0 | 2026-08-16 |
 | ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-contract-hardening/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-contract-hardening/unit-test-plan-checklist.md) | 1.0 | 2026-08-16 |
 | [评价、安全与完整交付](./evaluation-security-delivery/) | [implementation](./evaluation-security-delivery/implementation.md) / [checklist](./evaluation-security-delivery/implementation-checklist.md) | 1.0 | 2026-08-15 |
