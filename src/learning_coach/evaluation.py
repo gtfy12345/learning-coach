@@ -167,12 +167,26 @@ def evaluate_trajectory(state: dict[str, Any]) -> TrajectoryEvalReport:
         )
     )
 
-    details = [str(event.get("detail")) for event in state.get("learning_events") or []]
+    events = list(state.get("learning_events") or [])
+    unique_per_round = True
+    round_events: set[tuple[str, str, str]] = set()
+    for event in events:
+        event_key = (
+            str(event.get("node") or ""),
+            str(event.get("status") or ""),
+            str(event.get("detail") or ""),
+        )
+        if event_key in round_events:
+            unique_per_round = False
+            break
+        if event.get("node") == "assess":
+            round_events.clear()
+        round_events.add(event_key)
     checks.append(
         TrajectoryCheck(
             name="unique_events",
-            passed=len(details) == len(set(details)),
-            detail=f"事件 {len(details)} 条",
+            passed=unique_per_round,
+            detail=f"事件 {len(events)} 条（按评价轮次判重）",
         )
     )
 

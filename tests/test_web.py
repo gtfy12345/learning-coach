@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 from typing import Any
 
@@ -284,11 +285,30 @@ def test_web_session_grounds_teaching_in_optional_study_material() -> None:
     assert taught.status_code == 200
     payload = taught.json()
     assert payload["sources"]
-    assert payload["sources"][0]["source_id"].startswith("material-1#chunk-")
+    assert payload["sources"][0]["source_name"] == "pasted-text.txt"
+    assert payload["sources"][0]["source_id"]
     assert payload["retrieval_report"]["embedding_model_id"] == "local:hash-v1"
     assert len(payload["retrieval_report"]["attempts"]) <= 2
     assert "vector" not in json.dumps(payload["retrieval_report"])
     assert "retry 或 finish" in model.text_messages[0][1].content
+
+
+def test_web_ingests_pasted_text_without_other_materials() -> None:
+    client, _ = make_client()
+
+    response = client.post(
+        "/api/sessions",
+        data={
+            "topic": "LangGraph 条件边",
+            "study_material": "条件边读取 State，并路由到 retry 或 finish。",
+        },
+    )
+
+    assert response.status_code == 201
+    report = response.json()["ingestion_report"]
+    assert report["sources_received"] == 1
+    assert report["sources_added"] == 1
+    assert report["sources"][0]["source_name"] == "pasted-text.txt"
 
 
 def test_web_ingests_multiple_files_and_webpage_with_safe_report() -> None:
@@ -531,6 +551,29 @@ def test_web_timeout_setting_accepts_only_positive_numbers() -> None:
         web_run_timeout_seconds({"WEB_RUN_TIMEOUT_SECONDS": "secret"})
 
 
+def test_web_graph_runtime_does_not_require_python311_asyncio_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+    )
+    monkeypatch.delattr(asyncio, "timeout")
+
+    async def consume() -> list[tuple[str, dict[str, Any]]]:
+        return [
+            event
+            async for event in service.create_session_events("Python 3.10")
+        ]
+
+    events = asyncio.run(consume())
+
+    assert events[-1] == ("done", {"ok": True})
+    assert any(event == "state" for event, _payload in events)
+
+
 def test_web_graph_config_contains_safe_session_metadata_only() -> None:
     config = session_run_config("random-session", has_study_material=True)
     assert config["run_name"] == "learning_coach_session"
@@ -630,6 +673,29 @@ class SlowChatModel(FakeChatModel):
         return structured
 
 
+class FailingStructuredModel(FakeStructuredModel):
+    def invoke(self, messages: Any) -> Diagnostic | Assessment:
+        raise RuntimeError("PRIVATE-DIAGNOSTIC-DETAIL")
+
+
+class FailingDiagnosticChatModel(FakeChatModel):
+    def with_structured_output(
+        self, schema: type[Any], *, method: str
+    ) -> FailingStructuredModel:
+        return FailingStructuredModel(self, schema)
+
+
+class FailingTeachingChatModel(FakeChatModel):
+    def invoke(self, messages: Any) -> AIMessage:
+        raise RuntimeError("PRIVATE-TEACHING-DETAIL")
+
+
+class EmptyStreamingGraph:
+    async def astream(self, *args: Any, **kwargs: Any) -> Any:
+        if False:
+            yield None
+
+
 def test_stream_timeout_returns_safe_error_and_done_event() -> None:
     model = SlowChatModel()
     service = LearningSessionService(
@@ -652,6 +718,205 @@ def test_stream_timeout_returns_safe_error_and_done_event() -> None:
     )
     assert events[-1] == ("done", {"ok": False})
     assert "超时测试" not in events[-2][1]["message"]
+    assert service._session_run_locks == {}
+
+
+def test_json_session_timeout_uses_the_safe_stream_error_contract() -> None:
+    model = SlowChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:slow",
+        assessment_model_id="fake:slow",
+        run_timeout_seconds=0.01,
+    )
+    client = TestClient(create_app(service=service))
+
+    response = client.post("/api/sessions", data={"topic": "JSON 超时测试"})
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == {
+        "code": "run_timeout",
+        "message": "本次模型运行超时，请重试。",
+    }
+    assert "JSON 超时测试" not in response.text
+
+
+def test_json_session_failure_does_not_expose_model_errors() -> None:
+    model = FailingDiagnosticChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:failing",
+        assessment_model_id="fake:failing",
+    )
+    client = TestClient(create_app(service=service))
+
+    response = client.post("/api/sessions", data={"topic": "安全错误"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "run_failed",
+        "message": "本次模型运行失败，请检查配置后重试。",
+    }
+    assert "PRIVATE-DIAGNOSTIC-DETAIL" not in response.text
+
+
+def test_json_answer_failure_uses_the_same_safe_error_contract() -> None:
+    model = FailingTeachingChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:failing",
+        assessment_model_id="fake:failing",
+    )
+    client = TestClient(create_app(service=service))
+    started = client.post(
+        "/api/sessions", data={"topic": "回答错误边界"}
+    ).json()
+
+    response = client.post(
+        f"/api/sessions/{started['session_id']}/answers",
+        json={"answer": "继续学习。"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "run_failed",
+        "message": "本次模型运行失败，请检查配置后重试。",
+    }
+    assert "PRIVATE-TEACHING-DETAIL" not in response.text
+
+
+def test_concurrent_json_answers_are_serialized_per_session() -> None:
+    async def run_scenario() -> list[httpx.Response]:
+        model = SlowChatModel()
+        service = LearningSessionService(
+            models=LearningCoachModels.from_models(model),
+            chat_model_id="fake:slow",
+            assessment_model_id="fake:slow",
+            run_timeout_seconds=1,
+        )
+        transport = httpx.ASGITransport(app=create_app(service=service))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            started = (
+                await client.post(
+                    "/api/sessions", data={"topic": "并发回答单飞"}
+                )
+            ).json()
+            endpoint = f"/api/sessions/{started['session_id']}/answers"
+            return list(
+                await asyncio.gather(
+                    client.post(endpoint, json={"answer": "诊断回答"}),
+                    client.post(endpoint, json={"answer": "练习回答"}),
+                )
+            )
+
+    responses = asyncio.run(run_scenario())
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert {response.json()["stage"] for response in responses} == {
+        "quiz",
+        "summary",
+    }
+
+
+def test_async_session_initialization_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+    )
+    initialization_threads: list[int] = []
+    original_initial_state = service._initial_state
+
+    def tracked_initial_state(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        initialization_threads.append(threading.get_ident())
+        return original_initial_state(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_initial_state", tracked_initial_state)
+
+    async def initialize() -> int:
+        event_loop_thread = threading.get_ident()
+        events = await service.create_session_events_async("异步摄取")
+        async for _event in events:
+            pass
+        return event_loop_thread
+
+    event_loop_thread = asyncio.run(initialize())
+
+    assert initialization_threads
+    assert initialization_threads[0] != event_loop_thread
+
+
+def test_empty_stream_run_cleans_unregistered_runtime_context() -> None:
+    model = FakeChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+    )
+    service._graph = EmptyStreamingGraph()
+
+    async def consume() -> list[tuple[str, dict[str, Any]]]:
+        return [
+            event
+            async for event in service.create_session_events("空流清理")
+        ]
+
+    events = asyncio.run(consume())
+
+    assert events[-2] == (
+        "error",
+        {"code": "empty_run", "message": "本次模型运行没有返回状态，请重试。"},
+    )
+    assert service._sessions == set()
+    assert service._runtime_contexts == {}
+    assert service._session_run_locks == {}
+
+
+def test_session_lock_wait_is_bounded_by_the_run_timeout() -> None:
+    model = FakeChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+        run_timeout_seconds=0.01,
+    )
+    session = service.create_session("锁等待超时")
+
+    async def wait_behind_active_run() -> list[tuple[str, dict[str, Any]]]:
+        async def collect() -> list[tuple[str, dict[str, Any]]]:
+            return [
+                event
+                async for event in service.answer_events(
+                    session.session_id, "排队回答"
+                )
+            ]
+
+        lock = service._session_run_locks.setdefault(
+            session.session_id, asyncio.Lock()
+        )
+        await lock.acquire()
+        try:
+            return await asyncio.wait_for(
+                collect(),
+                timeout=0.1,
+            )
+        finally:
+            lock.release()
+
+    events = asyncio.run(wait_behind_active_run())
+
+    assert events == [
+        (
+            "error",
+            {"code": "run_timeout", "message": "本次模型运行超时，请重试。"},
+        ),
+        ("done", {"ok": False}),
+    ]
 
 
 def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> None:
@@ -724,6 +989,8 @@ def test_cancelled_stream_does_not_register_an_incomplete_session() -> None:
 
     asyncio.run(cancel_run())
     assert service._sessions == set()
+    assert service._runtime_contexts == {}
+    assert service._session_run_locks == {}
 
 
 def test_web_history_and_fork_endpoints_support_time_travel() -> None:

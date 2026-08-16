@@ -196,7 +196,11 @@ def _format_study_context(values: TaskInput) -> str:
         return hardened_study_context(source_context)
     prerequisites = "\n".join(
         f"- {item.reason}"
-        f"{f' 证据位置：{'；'.join(item.evidence_locations)}' if item.evidence_locations else ''}"
+        + (
+            " 证据位置：" + "；".join(item.evidence_locations)
+            if item.evidence_locations
+            else ""
+        )
         for item in graph_report.prerequisites
     )
     return hardened_study_context(

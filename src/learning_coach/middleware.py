@@ -33,6 +33,7 @@ from learning_coach.schemas import (
     RetrievalReport,
     StudySource,
 )
+from learning_coach.security import hardened_study_context
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,11 @@ class TeachingAgentRuntime:
     retriever: HybridStudyRetriever | GraphStudyRetriever = field(
         default_factory=GraphStudyRetriever
     )
+    retrieval_results: dict[str, HybridRetrievalResult] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
 
 
 @tool
@@ -55,6 +61,7 @@ def search_study_material(
     """Search the current session's pasted study material for relevant evidence."""
 
     retrieval = search_runtime_material_result(runtime.context, query)
+    runtime.context.retrieval_results[query] = retrieval
     if not retrieval.sources:
         return "没有找到相关资料片段。"
     source_context = "\n\n".join(
@@ -68,11 +75,13 @@ def search_study_material(
     )
     graph_report = retrieval.graph_report
     if graph_report is None or not graph_report.prerequisites:
-        return source_context
+        return hardened_study_context(source_context)
     reasons = "\n".join(
         f"- {item.reason}" for item in graph_report.prerequisites
     )
-    return f"{source_context}\n\n前置知识建议：\n{reasons}"
+    return hardened_study_context(
+        f"{source_context}\n\n前置知识建议：\n{reasons}"
+    )
 
 
 @tool
@@ -107,7 +116,11 @@ def choose_teaching_model(
 ) -> Any:
     """Prefer an optional stronger teaching model for struggling learners."""
 
-    if runtime.teaching.prefer_advanced_model and advanced_model is not None:
+    if (
+        runtime.teaching.prefer_advanced_model
+        and advanced_model is not None
+        and _supports_agent_tools(advanced_model)
+    ):
         return advanced_model
     return primary_model
 
@@ -391,17 +404,13 @@ class ContextEngineeredTeaching:
             for call in message.tool_calls:
                 if call["name"] != search_study_material.name:
                     continue
-                retrieval = search_runtime_material_result(
-                    agent_runtime, str(call.get("args", {}).get("query", ""))
-                )
+                query = str(call.get("args", {}).get("query", ""))
+                retrieval = agent_runtime.retrieval_results.get(query)
+                if retrieval is None:
+                    continue
                 retrieval_report = retrieval.report
                 graph_report = retrieval.graph_report
-                for candidate in retrieval.sources:
-                    if all(
-                        existing.source_id != candidate.source_id
-                        for existing in sources
-                    ):
-                        sources.append(candidate)
+                sources = list(retrieval.sources)
         return (
             _message_text(final_messages[-1]),
             sources,
@@ -454,13 +463,13 @@ class ContextEngineeredTeaching:
             task=dict(task),
             retriever=self.retriever,
         )
+        advanced_model = self._compatible_advanced_model()
         selected_model = choose_teaching_model(
-            agent_runtime, self.primary_model, self.advanced_model
+            agent_runtime, self.primary_model, advanced_model
         )
         selected_tier = (
             "advanced"
-            if self.advanced_model is not None
-            and selected_model is self.advanced_model
+            if advanced_model is not None and selected_model is advanced_model
             else "primary"
         )
         return agent_runtime, selected_model, selected_tier
@@ -469,7 +478,7 @@ class ContextEngineeredTeaching:
         middleware = build_teaching_middleware(
             runtime,
             primary_model=self.primary_model,
-            advanced_model=self.advanced_model,
+            advanced_model=self._compatible_advanced_model(),
             fallback_model=self.agent_fallback_model,
         )
         return create_agent(
@@ -479,6 +488,11 @@ class ContextEngineeredTeaching:
             context_schema=TeachingAgentRuntime,
             name="learning_coach_teaching_agent",
         )
+
+    def _compatible_advanced_model(self) -> Any | None:
+        if _supports_agent_tools(self.advanced_model):
+            return self.advanced_model
+        return None
 
     def _invoke_lcel(
         self,

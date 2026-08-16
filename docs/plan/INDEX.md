@@ -9,10 +9,13 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [收官审计契约加固 Follow-up](./evaluation-security-delivery-follow-up-contract-hardening/) | [implementation](./evaluation-security-delivery-follow-up-contract-hardening/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-contract-hardening/implementation-checklist.md) | 1.0 | 2026-08-16 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-contract-hardening/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-contract-hardening/unit-test-plan-checklist.md) | 1.0 | 2026-08-16 |
 | [评价、安全与完整交付](./evaluation-security-delivery/) | [implementation](./evaluation-security-delivery/implementation.md) / [checklist](./evaluation-security-delivery/implementation-checklist.md) | 1.0 | 2026-08-15 |
 | ↳ 单元测试 | [test-plan](./evaluation-security-delivery/unit-test-plan.md) / [checklist](./evaluation-security-delivery/unit-test-plan-checklist.md) | 1.0 | 2026-08-15 |
 | [记忆、暂停恢复与 Time Travel](./memory-time-travel/) | [implementation](./memory-time-travel/implementation.md) / [checklist](./memory-time-travel/implementation-checklist.md) | 1.0 | 2026-08-15 |

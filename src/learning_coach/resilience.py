@@ -6,6 +6,7 @@ replay never leaks another session's runtime context.
 """
 
 import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -70,7 +71,15 @@ def _image_fingerprint(images: Any) -> str:
     parts: list[str] = []
     for image in images or []:
         if isinstance(image, Mapping):
-            parts.append(str(image.get("base64", "")))
+            parts.append(
+                json.dumps(
+                    dict(image),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+            )
         else:
             parts.append(str(image))
     return "\x1f".join(parts)

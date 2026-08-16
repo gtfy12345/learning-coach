@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-16](2026-08-16.md) | `fix(core): harden audited runtime contracts (BUG-0001)` | #fix #test #docs |
 | [2026-08-15](2026-08-15.md) | `feat(evaluation): 完成评价与安全收官交付` | #feat #docs |
 | [2026-08-15](2026-08-15.md) | `feat(evaluation): 安全检测评价体系与阶段报告` | #feat |
 | [2026-08-15](2026-08-15.md) | `docs(evaluation): 定义评价与安全交付计划` | #docs |

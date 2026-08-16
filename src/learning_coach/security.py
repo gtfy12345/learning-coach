@@ -14,6 +14,7 @@ PIIKind = str  # constrained by schemas.PIIFinding
 
 MAX_SCAN_CHARS = 50_000
 MAX_SAFETY_FINDINGS = 10
+MAX_PII_MATCH_COUNT = 100
 
 _PII_PATTERNS: dict[str, re.Pattern[str]] = {
     "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
@@ -59,7 +60,7 @@ def find_pii(text: str) -> list[PIIFinding]:
     findings: list[PIIFinding] = []
     bounded = _bounded(text)
     for kind, pattern in _PII_PATTERNS.items():
-        count = len(pattern.findall(bounded))
+        count = min(len(pattern.findall(bounded)), MAX_PII_MATCH_COUNT)
         if count:
             findings.append(PIIFinding(kind=kind, count=count))
     return findings[:MAX_SAFETY_FINDINGS]

@@ -168,6 +168,26 @@ def test_diagnostic_cache_key_reflects_topic_and_images() -> None:
     }
     assert diagnostic_cache_key(base) != diagnostic_cache_key(with_image)
     assert diagnostic_cache_key(with_image) != diagnostic_cache_key(other_image)
+    with_url = {
+        "topic": "LangGraph Reducer",
+        "diagnostic_images": [
+            {"type": "image", "url": "https://example.com/diagram-a.png"}
+        ],
+    }
+    same_url = {
+        "topic": "LangGraph Reducer",
+        "diagnostic_images": [
+            {"type": "image", "url": "https://example.com/diagram-a.png"}
+        ],
+    }
+    other_url = {
+        "topic": "LangGraph Reducer",
+        "diagnostic_images": [
+            {"type": "image", "url": "https://example.com/diagram-b.png"}
+        ],
+    }
+    assert diagnostic_cache_key(with_url) == diagnostic_cache_key(same_url)
+    assert diagnostic_cache_key(with_url) != diagnostic_cache_key(other_url)
 
 
 def test_second_session_with_same_topic_reuses_cached_diagnostic() -> None:

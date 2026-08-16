@@ -60,3 +60,7 @@
 - [实施 Checklist](./implementation-checklist.md)
 - [单元测试计划](./unit-test-plan.md)
 - [上一阶段实施计划](../memory-time-travel/implementation.md)
+
+## 后续修复 / Follow-ups
+
+- 2026-08-16: [收官审计契约加固 Follow-up](../evaluation-security-delivery-follow-up-contract-hardening/implementation.md) - 修复全项目收官审计发现的兼容、安全、运行与测试契约漂移。

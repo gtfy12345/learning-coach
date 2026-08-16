@@ -31,6 +31,16 @@ def test_find_pii_ignores_normal_learning_text() -> None:
     assert find_pii(text) == []
 
 
+def test_find_pii_saturates_high_match_counts_without_raising() -> None:
+    text = " ".join(f"learner{index}@example.com" for index in range(101))
+
+    report = inspect_content_safety(text, source="study_material")
+
+    assert len(report.pii_findings) == 1
+    assert report.pii_findings[0].kind == "email"
+    assert report.pii_findings[0].count == 100
+
+
 def test_redact_pii_masks_matches_but_keeps_shape() -> None:
     redacted, count = redact_pii("邮箱 alice@example.com 电话 13812345678")
     assert count == 2

@@ -1,0 +1,73 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: evaluation-security-delivery-follow-up-contract-hardening
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 收官审计契约加固
+      - completion audit hardening
+      - Python 3.10 与运行契约修复
+    keywords:
+      - Python 3.10
+      - diagnostic image cache
+      - PII count overflow
+      - prompt injection hardening
+      - trajectory unique events
+      - JSON API timeout
+      - pasted text ingestion
+      - duplicate retrieval
+      - advanced model fallback
+      - pytest collection
+    relatedSpecs:
+      - ../../spec/evaluation-security-delivery-design.md
+      - ../../spec/context-engineering-middleware-design.md
+      - ../../spec/multimodal-material-ingestion-design.md
+      - ../../spec/langgraph-advanced-state-design.md
+      - ../../spec/lcel-production-chain-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/evaluation-security-delivery-follow-up-contract-hardening-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../evaluation-security-delivery/implementation.md
+        - ../../spec/evaluation-security-delivery-design.md
+        - ../../spec/context-engineering-middleware-design.md
+        - ../../spec/multimodal-material-ingestion-design.md
+        - ../../spec/langgraph-advanced-state-design.md
+        - ../../spec/lcel-production-chain-design.md
+        - ../../reports/2026-08-15-evaluation-security-delivery-assessment.md
+      discovery:
+        packages:
+          - src/learning_coach/runnables.py
+          - src/learning_coach/resilience.py
+          - src/learning_coach/security.py
+          - src/learning_coach/evaluation.py
+          - src/learning_coach/middleware.py
+          - src/learning_coach/web.py
+          - tests/test_resilience.py
+          - tests/test_security.py
+          - tests/test_evaluation.py
+          - tests/test_middleware.py
+          - tests/test_web.py
+        uiRoutes:
+          - /api/sessions
+          - /api/sessions/{id}/answers
+          - /api/sessions/stream
+          - /api/sessions/{id}/answers/stream
+        apiNames:
+          - diagnostic_cache_key
+          - find_pii
+          - hardened_study_context
+          - evaluate_trajectory
+          - search_study_material
+          - ContextEngineeredTeaching
+          - LearningSessionService
+        commands:
+          - python -m pytest
+          - python -m learning_coach evaluate

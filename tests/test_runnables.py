@@ -335,6 +335,7 @@ def test_teaching_rag_includes_prerequisite_explanation_in_prompt_and_result() -
     teaching_message = model.text_messages[-1][1].content
     assert "前置知识建议" in teaching_message
     assert "Reducer → 条件路由" in teaching_message
+    assert "证据位置：pasted-text.txt · chunk 1" in teaching_message
 
 
 def test_teaching_runnable_graph_contains_advanced_lcel_composition() -> None:

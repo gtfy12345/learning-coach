@@ -41,3 +41,4 @@
 
 | ID | 标题 | 严重度 | 状态 | 发现日期 | 关联 Commit |
 |----|------|--------|------|----------|-------------|
+| [BUG-0001](./BUG-0001.md) | 收官审计未覆盖跨层运行契约漂移 | medium | resolved | 2026-08-16 | `fix(core): harden audited runtime contracts (BUG-0001)` |

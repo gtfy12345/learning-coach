@@ -102,6 +102,23 @@ def test_evaluate_trajectory_flags_violations() -> None:
     assert {"bounded_attempts", "bounded_revision", "handoff_structure", "unique_events", "summary_present"} <= failed
 
 
+def test_evaluate_trajectory_flags_replayed_assessment_boundary() -> None:
+    state = _finished_state(
+        learning_events=[
+            {"node": "teach", "status": "completed", "detail": "讲解完成"},
+            {"node": "assess", "status": "completed", "detail": "第 1 次评价 60 分"},
+            {"node": "assess", "status": "completed", "detail": "第 1 次评价 60 分"},
+        ]
+    )
+
+    report = evaluate_trajectory(state)
+
+    unique_events = next(
+        check for check in report.checks if check.name == "unique_events"
+    )
+    assert unique_events.passed is False
+
+
 def test_evaluate_trajectory_checks_code_approval_record() -> None:
     code_state = _finished_state(
         code_exercise={"exercise_id": "x" * 64},
@@ -186,6 +203,26 @@ def test_full_session_ends_with_stage_report_and_safety_trace() -> None:
     assert result["learning_events"]
 
 
+def test_two_attempt_session_keeps_trajectory_events_unique_per_round() -> None:
+    graph = build_learning_graph(ScriptedFakeChatModel(scores=[55, 55]))
+    config = {"configurable": {"thread_id": "two-attempt-trajectory-session"}}
+
+    graph.invoke({"topic": "LangGraph 补救", "attempts": 0}, config=config)
+    graph.invoke(Command(resume="先检查我的基础。"), config=config)
+    graph.invoke(Command(resume="第一次答案。"), config=config)
+    result = graph.invoke(Command(resume="第二次答案。"), config=config)
+
+    report = result["stage_report"]
+    unique_events = next(
+        check
+        for check in report["trajectory"]["checks"]
+        if check["name"] == "unique_events"
+    )
+    assert result["attempts"] == 2
+    assert unique_events["passed"] is True
+    assert report["trajectory"]["passed"] is True
+
+
 def test_safety_findings_flow_through_collect_nodes() -> None:
     graph = build_learning_graph(FakeChatModel())
     config = {"configurable": {"thread_id": "safety-trace-session"}}
@@ -223,5 +260,13 @@ def test_public_docs_describe_evaluation_and_security_contract() -> None:
         "阶段报告",
         "learning_coach evaluate",
         "定界符",
+        "Python 3.10",
+        "PYTHONPATH=src python -m pytest",
+        "同一评价轮次",
+        "run_timeout",
+        "pasted-text.txt",
+        "一次 `search_study_material` Tool 调用只执行一次检索",
+        "排队等待与图执行共用一个总 deadline",
+        "清理临时 runtime 与 lock",
     ):
         assert term in readme

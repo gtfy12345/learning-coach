@@ -68,6 +68,15 @@ STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
 
 
+async def _await_before_deadline(
+    awaitable_factory: Callable[[], Any], deadline: float
+) -> Any:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise asyncio.TimeoutError
+    return await asyncio.wait_for(awaitable_factory(), timeout=remaining)
+
+
 class SessionNotFoundError(LookupError):
     """Raised when a browser tries to resume an unknown in-memory session."""
 
@@ -221,6 +230,7 @@ class LearningSessionService:
             raise ValueError("run_timeout_seconds 必须是正数。")
         self._sessions: set[str] = set()
         self._runtime_contexts: dict[str, LearningRuntimeContext] = {}
+        self._session_run_locks: dict[str, asyncio.Lock] = {}
         self._context_settings = context_settings or LearningContextSettings.from_environ(
             os.environ
         )
@@ -333,7 +343,7 @@ class LearningSessionService:
             initial_state["safety_findings"] = safety_findings_updates(
                 material_safety
             )
-        if materials:
+        if materials or normalized_material:
             ingestion_materials = list(materials)
             if normalized_material:
                 ingestion_materials.append(
@@ -405,6 +415,33 @@ class LearningSessionService:
         initial_state = self._initial_state(
             topic, image_blocks, study_material, learning_goal, materials, learner_id
         )
+        return self._events_for_initial_state(initial_state)
+
+    async def create_session_events_async(
+        self,
+        topic: str,
+        image_blocks: Sequence[dict[str, Any]] = (),
+        study_material: str = "",
+        learning_goal: str = "",
+        materials: Sequence[MaterialInput] = (),
+        learner_id: str = "",
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """Prepare blocking material ingestion off-loop, then stream the graph."""
+
+        initial_state = await asyncio.to_thread(
+            self._initial_state,
+            topic,
+            image_blocks,
+            study_material,
+            learning_goal,
+            materials,
+            learner_id,
+        )
+        return self._events_for_initial_state(initial_state)
+
+    def _events_for_initial_state(
+        self, initial_state: dict[str, Any]
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         session_id = uuid.uuid4().hex
         self._runtime_contexts[session_id] = create_learning_runtime_context(
             initial_state["topic"],
@@ -501,6 +538,58 @@ class LearningSessionService:
         *,
         register_session: bool,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        lock = self._session_run_locks.setdefault(session_id, asyncio.Lock())
+        deadline = (
+            asyncio.get_running_loop().time() + self._run_timeout_seconds
+        )
+        lock_acquired = False
+        iterator: Any | None = None
+        timed_out = False
+        try:
+            await _await_before_deadline(lock.acquire, deadline)
+            lock_acquired = True
+            iterator = self._unlocked_graph_events(
+                session_id,
+                graph_input,
+                register_session=register_session,
+            ).__aiter__()
+            while True:
+                try:
+                    event = await _await_before_deadline(
+                        iterator.__anext__, deadline
+                    )
+                except StopAsyncIteration:
+                    break
+                yield event
+        except (TimeoutError, asyncio.TimeoutError):
+            timed_out = True
+            if register_session:
+                self._runtime_contexts.pop(session_id, None)
+        finally:
+            try:
+                if iterator is not None:
+                    await iterator.aclose()
+            finally:
+                if lock_acquired:
+                    lock.release()
+                if register_session and session_id not in self._sessions:
+                    self._runtime_contexts.pop(session_id, None)
+                    if self._session_run_locks.get(session_id) is lock:
+                        self._session_run_locks.pop(session_id, None)
+        if timed_out:
+            yield "error", {
+                "code": "run_timeout",
+                "message": "本次模型运行超时，请重试。",
+            }
+            yield "done", {"ok": False}
+
+    async def _unlocked_graph_events(
+        self,
+        session_id: str,
+        graph_input: dict[str, Any] | Command,
+        *,
+        register_session: bool,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         graph = self._ensure_graph()
         config = session_run_config(
             session_id,
@@ -514,32 +603,24 @@ class LearningSessionService:
         latest_state: dict[str, Any] | None = None
         latest_interrupts: Sequence[Any] = ()
         try:
-            async with asyncio.timeout(self._run_timeout_seconds):
-                async for part in graph.astream(
-                    graph_input,
-                    config=config,
-                    stream_mode=["custom", "values"],
-                    version="v2",
-                    subgraphs=True,
-                    context=self._runtime_contexts[session_id],
-                ):
-                    if part["type"] == "custom":
-                        event = dict(part["data"])
-                        event_name = str(event.pop("event", "status"))
-                        yield event_name, event
-                    elif part["type"] == "values" and not part.get("ns"):
-                        latest_state = dict(part["data"])
-                        if part.get("interrupts"):
-                            latest_interrupts = part["interrupts"]
-        except TimeoutError:
-            if register_session:
-                self._runtime_contexts.pop(session_id, None)
-            yield "error", {
-                "code": "run_timeout",
-                "message": "本次模型运行超时，请重试。",
-            }
-            yield "done", {"ok": False}
-            return
+            async for part in graph.astream(
+                graph_input,
+                config=config,
+                stream_mode=["custom", "values"],
+                version="v2",
+                subgraphs=True,
+                context=self._runtime_contexts[session_id],
+            ):
+                if part["type"] == "custom":
+                    event = dict(part["data"])
+                    event_name = str(event.pop("event", "status"))
+                    yield event_name, event
+                elif part["type"] == "values" and not part.get("ns"):
+                    latest_state = dict(part["data"])
+                    if part.get("interrupts"):
+                        latest_interrupts = part["interrupts"]
+        except (TimeoutError, asyncio.TimeoutError):
+            raise
         except asyncio.CancelledError:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
@@ -555,6 +636,8 @@ class LearningSessionService:
             return
 
         if latest_state is None:
+            if register_session:
+                self._runtime_contexts.pop(session_id, None)
             yield "error", {
                 "code": "empty_run",
                 "message": "本次模型运行没有返回状态，请重试。",
@@ -689,6 +772,31 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+async def _session_view_from_events(
+    events: AsyncIterator[tuple[str, dict[str, Any]]],
+) -> SessionView:
+    state_payload: dict[str, Any] | None = None
+    error_payload: dict[str, Any] | None = None
+    async for event, payload in events:
+        if event == "state":
+            state_payload = payload
+        elif event == "error":
+            error_payload = payload
+
+    if error_payload is not None:
+        status_code = 504 if error_payload.get("code") == "run_timeout" else 503
+        raise HTTPException(status_code=status_code, detail=error_payload)
+    if state_payload is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "empty_run",
+                "message": "本次模型运行没有返回状态，请重试。",
+            },
+        )
+    return SessionView.model_validate(state_payload)
+
+
 async def _read_material_inputs(
     uploads: Sequence[UploadFile],
     source_urls: str,
@@ -766,8 +874,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
             material_inputs = await _read_material_inputs(
                 materials or [], source_urls
             )
-            return await run_in_threadpool(
-                session_service.create_session,
+            events = await session_service.create_session_events_async(
                 topic,
                 image_blocks,
                 study_material,
@@ -775,6 +882,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 material_inputs,
                 learner_id,
             )
+            return await _session_view_from_events(events)
         except Exception as exc:
             _raise_http_error(exc)
             raise
@@ -805,7 +913,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
             material_inputs = await _read_material_inputs(
                 materials or [], source_urls
             )
-            events = session_service.create_session_events(
+            events = await session_service.create_session_events_async(
                 topic,
                 image_blocks,
                 study_material,
@@ -840,9 +948,8 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
         request: AnswerRequest,
     ) -> SessionView:
         try:
-            return await run_in_threadpool(
-                session_service.answer, session_id, request.answer
-            )
+            events = session_service.answer_events(session_id, request.answer)
+            return await _session_view_from_events(events)
         except Exception as exc:
             _raise_http_error(exc)
             raise
