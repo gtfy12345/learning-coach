@@ -224,6 +224,34 @@ def test_model_navigation_and_settings_layout_are_accessible_and_responsive() ->
     assert "overflow-wrap: anywhere" in styles
 
 
+def test_home_page_offers_topic_and_course_entries() -> None:
+    client, _ = make_client()
+
+    page = client.get("/").text
+    script = client.get("/static/app.js").text
+    styles = client.get("/static/styles.css").text
+
+    assert 'class="entry-tabs"' in page
+    assert "主题学习" in page
+    assert "资料课程" in page
+    assert 'id="topic-entry"' in page
+    assert 'id="course-entry"' in page
+    assert 'id="course-form"' in page
+    assert 'id="course-book"' in page
+    assert 'id="course-list"' in page
+    assert 'id="back-to-course"' in page
+    assert "/api/courses" in script
+    assert "/sessions/stream" in script
+    assert "startChapterSession" in script
+    assert "switchEntryTab" in script
+    assert "loadCourseList" in script
+    assert "renderCourseCard" in script
+    assert "refreshActiveCourseProgress" in script
+    assert "localStorage" not in script
+    assert ".course-chapter" in styles
+    assert ".entry-tabs" in styles
+
+
 def test_settings_page_supports_quick_select_suggestions_and_ticket_countdown() -> None:
     client, _ = make_client()
 

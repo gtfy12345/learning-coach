@@ -29,6 +29,7 @@ flowchart LR
 这条流程包含：
 
 - 可在浏览器完成完整学习闭环的本地 Web MVP
+- 首页双入口：「主题学习」沿用先教后测流程；「资料课程」把整本书按真实结构拆成章节，逐章讲解出题并累计进度
 - 默认“先教学再检查”，并保留可选的“先诊断再讲解”模式
 - 独立本机模型设置页：支持 OpenAI、Anthropic、Google、DeepSeek、通义千问、智谱 GLM 与自定义 OpenAI 兼容接口，API 配置测试后应用，也可选择 Codex/Claude 官方 CLI 登录
 - LangChain 模型统一接口与 Messages
@@ -186,6 +187,7 @@ PYTHONPATH=src python -m learning_coach web --model codex_cli:default
 
 - 默认先生成基础教学，再通过结构化理解检查确认掌握情况
 - 可在首页选择 `diagnose_first`，先生成结构化诊断题再针对讲解
+- 「资料课程」入口上传整本书，按章节生成课程列表、逐章学习和进度徽标
 - 输入可选学习目标，让讲解根据掌握度和最近错误动态调整
 - 上传一张本地图片参与诊断
 - 粘贴纯文本，或上传多份论文、书籍、课件、图片与代码资料
@@ -222,6 +224,10 @@ PYTHONPATH=src python -m learning_coach web --model codex_cli:default
 | `POST /api/model-config/test` | 对内存 API 候选执行最小真实兼容性测试并签发 5 分钟一次性票据 |
 | `PUT /api/model-config` | 应用已测试 API 候选，或切换到 Codex/Claude CLI 模型 |
 | `GET/POST /api/model-auth/{codex\|claude}/...` | 委托官方 CLI 执行状态、登录或退出 |
+| `POST /api/courses` | 上传一份资料，按真实结构生成章节课程并写入进度存储（仅回环） |
+| `GET /api/learners/{learner_id}/courses` | 列出学习者的课程与章节进度 |
+| `GET /api/courses/{course_id}` | 返回单门课程的章节列表、状态、分数与建议续学章节 |
+| `POST /api/courses/{id}/chapters/{chapter_id}/sessions/stream` | 以 SSE 创建该章的学习会话，讲解与练习限定在本章范围内 |
 | `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
@@ -316,6 +322,28 @@ Loader 统一输出 `Document(page_content, metadata)`，不同格式负责提�
 同一来源和 `content_hash` 再次摄取时标记为 skipped；同名来源内容变化时只替换该来源；`full` 同步可以删除本轮缺失来源。当前索引只保存在会话内存中，不写入磁盘、SQLite 或外部向量数据库。
 
 安全边界：单份资料最大 10 MiB，默认最多 10 个资料、其中最多 3 张图片，总上传最大 30 MiB；网页响应最大 2 MiB。网页 Loader 只允许 http/https，并对初始 URL、DNS 结果和每次重定向执行 SSRF 检查，拒绝 loopback、私网、链路本地和保留地址。代码只读取，不执行。图片每张最多调用视觉模型一次；主模型没有声明图片能力时明确失败。
+
+### 资料课程学习
+
+「资料课程」入口把一份完整资料变成可逐章学习的课程。拆解完全确定性、零模型调用：EPUB 按自带章节、DOCX/HTML 按标题分组；PDF 优先读取内嵌目录大纲，没有目录时按页码窗口分段成“讲”；完全无结构的文本按固定片段数分段。章节过短会并入相邻章，章节数上限 60。
+
+```mermaid
+flowchart LR
+    B[上传整本书] --> I[放宽上限摄取]
+    I --> O[按真实结构拆章]
+    O --> S[课程与进度入库]
+    S --> C[章节列表 · 进度徽标]
+    C -->|每章一个会话| T[先教后测完整闭环]
+    T -->|会话完成| P[写回章节进度]
+    P --> C
+```
+
+关键行为与边界：
+
+- 建课路径单独放宽体量：单文件 50 MiB、总量 100 MiB、提取文本 100 万字符、仅接受一份资料；普通会话的资料上限维持 10 MiB 不变。
+- 每章是一个独立学习会话，主题为「书名 · 章节名」，讲解、练习与评价只使用本章片段；会话内评分、补救和审批语义与主题学习完全一致。
+- 章节进度（未开始/学习中/已完成+分数）写入与长期记忆相同的 Store，`MEMORY_DB_PATH` 指向 SQLite 即跨重启保留；书的正文片段只缓存在服务进程内存（最多 3 本），服务重启后重传同一份资料即可按内容哈希挂回原课程继续。
+- 自由选章：列表按书序排列并标注“建议继续”章节，可任意点开学或复习；学习者标识与主题学习共用，课程进度会并入同一画像。
 
 ### 自校正 Hybrid RAG
 
@@ -695,6 +723,7 @@ learning-coach/
 │       ├── cli_models.py
 │       ├── code_practice.py
 │       ├── context.py
+│       ├── course.py
 │       ├── graph.py
 │       ├── hybrid_rag.py
 │       ├── ingestion.py
@@ -726,6 +755,8 @@ learning-coach/
     ├── test_cli.py
     ├── test_cli_models.py
     ├── test_context.py
+    ├── test_course.py
+    ├── test_course_api.py
     ├── test_evaluation.py
     ├── test_graph.py
     ├── test_hybrid_rag.py
@@ -747,6 +778,7 @@ learning-coach/
 
 - `state.py`：学习过程、掌握度、最近错误、并行事件、摘要和结构化诊断信息保存哪些数据，并用 Reducer 定义并行合并语义。
 - `context.py`：定义 Runtime Context、预算校验、掌握度分层、最近错误和确定性摘要。
+- `course.py`：整本资料的确定性拆章、章节课程模型和跨会话进度读写。
 - `ingestion.py`：定义资料输入、Metadata、位置感知 Splitter、SHA-256 和会话级增量索引。
 - `loaders.py`：解析 PDF、Office、EPUB、HTML、网页、图片、文本与代码并输出 LangChain Document。
 - `hybrid_rag.py`：实现本地/Provider Embedding、BM25、Dense、RRF、重排、质量判断和有界查询改写。
@@ -797,6 +829,8 @@ learning-coach/
 - 诊断图片和资料图片是两个显式输入：前者只进入诊断，后者由视觉模型生成可检索描述；扫描 PDF 不会自动逐页 OCR。
 - 只读取用户明确上传或通过 `--material`/`source_urls` 提交的资料，不会扫描目录、递归爬站或自动读取个人文件。
 - 增量索引只存在于当前会话内存，不写入磁盘，也不能跨服务重启复用；持久化语料库和向量索引尚未实现。
+- 资料课程只在 Web 提供，CLI 仍只有 `teach_first`/`diagnose_first` 两种模式；课程拆解不调用模型，PDF 无目录时按页分段、PDF 目录质量取决于制作工具。
+- 课程的正文片段缓存最多 3 本且不落盘；章节进度依赖 `MEMORY_DB_PATH` 持久化，默认内存 Store 下重启即清空。
 - 网页 Loader 解析静态 HTML，不执行页面 JavaScript；复杂排版、公式和受密码保护文档可能无法完整提取。
 - `InMemorySaver` 只保存当前进程中的状态。
 - Web MVP 目前只面向本机使用，没有用户账号、远程配置权限模型或公网部署；页面 API Key 不持久化。

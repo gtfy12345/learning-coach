@@ -8,6 +8,8 @@ from langchain_core.messages import AIMessage
 from PIL import Image
 from pptx import Presentation
 
+from pypdf import PdfReader, PdfWriter
+
 from learning_coach.ingestion import MAX_WEB_RESPONSE_BYTES, MaterialInput
 from learning_coach.loaders import (
     ImageMaterialLoader,
@@ -53,6 +55,19 @@ def _minimal_pdf(text: str) -> bytes:
         ).encode("ascii")
     )
     return bytes(payload)
+
+
+def _outlined_pdf(
+    pages: list[str], outline: list[tuple[str, int]]
+) -> bytes:
+    writer = PdfWriter()
+    for text in pages:
+        writer.append(PdfReader(BytesIO(_minimal_pdf(text))))
+    for title, page_number in outline:
+        writer.add_outline_item(title, page_number)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _docx_bytes() -> bytes:
@@ -176,6 +191,36 @@ def test_html_text_markdown_and_code_loaders_keep_structure() -> None:
     assert code[0].metadata["line_start"] == 1
     assert code[0].metadata["line_end"] == 2
     assert code[0].metadata["language"] == "python"
+
+
+def test_pdf_loader_maps_outline_chapters_to_pages() -> None:
+    registry = default_loader_registry()
+    data = _outlined_pdf(
+        ["Cover page", "Chapter one body", "More chapter one", "Chapter two body"],
+        [("第一章", 1), ("第二章", 3)],
+    )
+
+    documents = registry.load(
+        MaterialInput("book.pdf", "application/pdf", data=data)
+    )
+
+    assert [document.metadata.get("chapter") for document in documents] == [
+        None,
+        "第一章",
+        "第一章",
+        "第二章",
+    ]
+    assert [document.metadata["page"] for document in documents] == [1, 2, 3, 4]
+
+
+def test_pdf_loader_without_outline_keeps_chapters_empty() -> None:
+    registry = default_loader_registry()
+
+    documents = registry.load(
+        MaterialInput("plain.pdf", "application/pdf", data=_minimal_pdf("plain"))
+    )
+
+    assert [document.metadata.get("chapter") for document in documents] == [None]
 
 
 def test_corrupt_or_empty_document_fails_without_exposing_content() -> None:

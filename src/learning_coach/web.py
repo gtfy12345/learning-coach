@@ -4,7 +4,9 @@ import json
 import os
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,13 +19,25 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from learning_coach.auth import run_auth_action
+from learning_coach.course import (
+    CourseRecord,
+    build_course_outline,
+    chapter_chunks,
+    course_summary,
+    list_courses,
+    load_course,
+    record_chapter_result,
+    save_course,
+)
 from learning_coach.graph import build_learning_graph
 from learning_coach.hybrid_rag import RagSettings
 from learning_coach.ingestion import (
+    COURSE_MATERIAL_LIMITS,
     MAX_SINGLE_MATERIAL_BYTES,
     IngestionReport,
     MaterialIngestionPipeline,
     MaterialInput,
+    StudyChunkRecord,
     material_inputs_from_urls,
     validate_material_batch,
 )
@@ -80,6 +94,11 @@ from learning_coach.state import (
 
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
+MAX_COURSE_CORPORA = 3
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 async def _await_before_deadline(
@@ -173,6 +192,36 @@ class UnconfiguredRuntimeModelConfig(BaseModel):
     error: str
 
 
+class CourseChapterView(BaseModel):
+    chapter_id: str
+    title: str
+    location: str = ""
+    order: int
+    chunks: int
+    status: Literal["not_started", "in_progress", "completed"] = "not_started"
+    score: int | None = None
+    attempts: int = 0
+
+
+class CourseView(BaseModel):
+    course_id: str
+    book_title: str
+    chapters_total: int = 0
+    completed_chapters: int = 0
+    average_score: int | None = None
+    next_chapter_id: str | None = None
+    next_chapter_title: str | None = None
+    updated_at: str = ""
+    chapters: list[CourseChapterView] = Field(default_factory=list)
+
+
+class CourseContextView(BaseModel):
+    course_id: str
+    book_title: str
+    chapter_id: str
+    chapter_title: str
+
+
 class SessionView(BaseModel):
     session_id: str
     status: Literal["waiting", "completed"]
@@ -213,6 +262,7 @@ class SessionView(BaseModel):
     attempts: int = 0
     summary: str | None = None
     sources: list[StudySource] = Field(default_factory=list)
+    course: CourseContextView | None = None
 
 
 class PublicModelConfig(BaseModel):
@@ -272,6 +322,8 @@ class LearningSessionService:
         self._runtime_contexts: dict[str, LearningRuntimeContext] = {}
         self._session_run_locks: dict[str, asyncio.Lock] = {}
         self._session_runtimes: dict[str, RuntimeModelVersion] = {}
+        self._course_corpora: OrderedDict[str, list[StudyChunkRecord]] = OrderedDict()
+        self._course_sessions: dict[str, dict[str, str]] = {}
         self._context_settings = context_settings or LearningContextSettings.from_environ(
             os.environ
         )
@@ -333,6 +385,138 @@ class LearningSessionService:
             raise ValueError("不支持的认证动作。")
         with self._auth_locks[provider]:
             self._auth_action(provider, action)
+
+    def create_course(
+        self, *, material: MaterialInput, learner_id: str
+    ) -> CourseView:
+        """Ingest one book with relaxed course limits and persist its outline."""
+
+        runtime = self._ensure_runtime()
+        learner = self._normalized_learner(learner_id)
+        ingestion = MaterialIngestionPipeline(
+            default_loader_registry(
+                web_fetcher=self._web_fetcher,
+                image_model=runtime.models.chat,
+                accepts_images=runtime.models.accepts_images,
+            )
+        ).ingest([material], limits=material.limits)
+        outline = build_course_outline(
+            Path(material.source_name).stem or material.source_name,
+            ingestion.chunks,
+        )
+        self._store_course_corpus(outline.course_id, ingestion.chunks)
+        record = save_course(self._store, learner, outline, now=_now_iso())
+        return _course_detail_view(record)
+
+    def list_learner_courses(self, learner_id: str) -> list[CourseView]:
+        learner = self._normalized_learner(learner_id)
+        return [
+            _course_detail_view(record)
+            for record in list_courses(self._store, learner)
+        ]
+
+    def course_detail(self, *, learner_id: str, course_id: str) -> CourseView:
+        record = load_course(
+            self._store, self._normalized_learner(learner_id), course_id
+        )
+        if record is None:
+            raise LookupError("找不到指定的课程。")
+        return _course_detail_view(record)
+
+    async def create_chapter_session_events_async(
+        self,
+        *,
+        course_id: str,
+        chapter_id: str,
+        learner_id: str,
+        learning_mode: str | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """Prepare a chapter session off-loop, then stream the shared graph."""
+
+        prepared = await asyncio.to_thread(
+            self._prepare_chapter_session,
+            course_id,
+            chapter_id,
+            learner_id,
+            learning_mode,
+        )
+        return self._events_for_initial_state(
+            prepared["initial_state"],
+            prepared["runtime"],
+            course_context=prepared["course_context"],
+        )
+
+    def _prepare_chapter_session(
+        self,
+        course_id: str,
+        chapter_id: str,
+        learner_id: str,
+        learning_mode: str | None,
+    ) -> dict[str, Any]:
+        learner = self._normalized_learner(learner_id)
+        record = load_course(self._store, learner, course_id)
+        if record is None:
+            raise LookupError("找不到指定的课程。")
+        chapter = next(
+            (
+                item
+                for item in record.chapters
+                if item.chapter_id == chapter_id
+            ),
+            None,
+        )
+        if chapter is None:
+            raise LookupError("找不到指定的章节。")
+        chunks = self._course_corpora.get(course_id)
+        if chunks is None:
+            raise ValueError(
+                "课程语料已随服务重启清空；请重新上传同一份资料恢复学习。"
+            )
+        self._course_corpora.move_to_end(course_id)
+        selected = chapter_chunks(chunks, chapter_id)
+        initial_state: dict[str, Any] = {
+            "topic": f"《{record.book_title}》{chapter.title}"[:500],
+            "learning_mode": learning_mode_for_new_session(learning_mode),
+            "learning_goal": (
+                f"掌握《{record.book_title}》第 {chapter.order} 章：{chapter.title}"
+            )[:1000],
+            "learner_id": learner,
+            "mastery_level": 0,
+            "recent_errors": [],
+            "attempts": 0,
+            "study_chunks": [chunk.model_dump() for chunk in selected],
+        }
+        record_chapter_result(
+            self._store,
+            learner,
+            course_id,
+            chapter_id,
+            status="in_progress",
+            now=_now_iso(),
+        )
+        return {
+            "initial_state": initial_state,
+            "runtime": self._ensure_runtime(),
+            "course_context": {
+                "course_id": course_id,
+                "chapter_id": chapter_id,
+                "learner_id": learner,
+                "book_title": record.book_title,
+                "chapter_title": chapter.title,
+            },
+        }
+
+    @staticmethod
+    def _normalized_learner(learner_id: str) -> str:
+        return (learner_id or "").strip()[:100] or "local-learner"
+
+    def _store_course_corpus(
+        self, course_id: str, chunks: list[StudyChunkRecord]
+    ) -> None:
+        self._course_corpora[course_id] = chunks
+        self._course_corpora.move_to_end(course_id)
+        while len(self._course_corpora) > MAX_COURSE_CORPORA:
+            self._course_corpora.popitem(last=False)
 
     def _ensure_runtime(self) -> RuntimeModelVersion:
         try:
@@ -614,8 +798,12 @@ class LearningSessionService:
         self,
         initial_state: dict[str, Any],
         runtime: RuntimeModelVersion | None = None,
+        *,
+        course_context: Mapping[str, str] | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         session_id = uuid.uuid4().hex
+        if course_context is not None:
+            self._course_sessions[session_id] = dict(course_context)
         self._session_runtimes[session_id] = runtime or self._ensure_runtime()
         self._runtime_contexts[session_id] = create_learning_runtime_context(
             initial_state["topic"],
@@ -753,6 +941,7 @@ class LearningSessionService:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
                 self._session_runtimes.pop(session_id, None)
+                self._course_sessions.pop(session_id, None)
         finally:
             try:
                 if iterator is not None:
@@ -763,6 +952,7 @@ class LearningSessionService:
                 if register_session and session_id not in self._sessions:
                     self._runtime_contexts.pop(session_id, None)
                     self._session_runtimes.pop(session_id, None)
+                    self._course_sessions.pop(session_id, None)
                     if self._session_run_locks.get(session_id) is lock:
                         self._session_run_locks.pop(session_id, None)
         if timed_out:
@@ -814,11 +1004,13 @@ class LearningSessionService:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
                 self._session_runtimes.pop(session_id, None)
+                self._course_sessions.pop(session_id, None)
             raise
         except Exception:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
                 self._session_runtimes.pop(session_id, None)
+                self._course_sessions.pop(session_id, None)
             yield "error", {
                 "code": "run_failed",
                 "message": "本次模型运行失败，请检查配置后重试。",
@@ -830,6 +1022,7 @@ class LearningSessionService:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
                 self._session_runtimes.pop(session_id, None)
+                self._course_sessions.pop(session_id, None)
             yield "error", {
                 "code": "empty_run",
                 "message": "本次模型运行没有返回状态，请重试。",
@@ -838,9 +1031,28 @@ class LearningSessionService:
             return
         if latest_interrupts:
             latest_state["__interrupt__"] = latest_interrupts
+        course_context = self._course_sessions.get(session_id)
+        if course_context is not None and not latest_interrupts:
+            record_chapter_result(
+                self._store,
+                course_context["learner_id"],
+                course_context["course_id"],
+                course_context["chapter_id"],
+                status="completed",
+                score=latest_state.get("score"),
+                attempts=int(latest_state.get("attempts") or 0),
+                now=_now_iso(),
+            )
         if register_session:
             self._sessions.add(session_id)
         view = self._view(session_id, latest_state)
+        if course_context is not None:
+            view.course = CourseContextView(
+                course_id=course_context["course_id"],
+                book_title=course_context["book_title"],
+                chapter_id=course_context["chapter_id"],
+                chapter_title=course_context["chapter_title"],
+            )
         yield "state", view.model_dump(mode="json")
         yield "done", {"ok": True}
 
@@ -949,6 +1161,25 @@ class LearningSessionService:
             summary=state.get("summary"),
             sources=state.get("explanation_sources", []),
         )
+
+
+def _course_detail_view(record: CourseRecord) -> CourseView:
+    summary = course_summary(record)
+    chapters = [
+        CourseChapterView(
+            chapter_id=chapter.chapter_id,
+            title=chapter.title,
+            location=chapter.location,
+            order=chapter.order,
+            chunks=chapter.chunks,
+            status=entry.status if entry is not None else "not_started",
+            score=entry.score if entry is not None else None,
+            attempts=entry.attempts if entry is not None else 0,
+        )
+        for chapter in record.chapters
+        for entry in (record.progress.get(chapter.chapter_id),)
+    ]
+    return CourseView(**summary, chapters=chapters)
 
 
 def _raise_http_error(exc: Exception) -> None:
@@ -1153,6 +1384,93 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
         except Exception as exc:
             _raise_http_error(exc)
             raise
+
+    @application.post("/api/courses", response_model=CourseView, status_code=201)
+    async def create_course(
+        request: Request,
+        learner_id: str = Form(default=""),
+        book: UploadFile = File(...),
+    ) -> CourseView:
+        _require_loopback(request)
+        try:
+            data = await book.read(COURSE_MATERIAL_LIMITS.max_single_bytes + 1)
+            material = MaterialInput(
+                source_name=book.filename or "book",
+                mime_type=book.content_type or "application/octet-stream",
+                data=data,
+                limits=COURSE_MATERIAL_LIMITS,
+            )
+            return await run_in_threadpool(
+                session_service.create_course,
+                material=material,
+                learner_id=learner_id,
+            )
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+        finally:
+            await book.close()
+
+    @application.get(
+        "/api/learners/{learner_id}/courses",
+        response_model=list[CourseView],
+    )
+    def list_learner_courses(
+        learner_id: str,
+        request: Request,
+    ) -> list[CourseView]:
+        _require_loopback(request)
+        return session_service.list_learner_courses(learner_id)
+
+    @application.get("/api/courses/{course_id}", response_model=CourseView)
+    def course_detail(
+        course_id: str,
+        request: Request,
+        learner_id: str = "",
+    ) -> CourseView:
+        _require_loopback(request)
+        try:
+            return session_service.course_detail(
+                learner_id=learner_id,
+                course_id=course_id,
+            )
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.post(
+        "/api/courses/{course_id}/chapters/{chapter_id}/sessions/stream",
+        status_code=201,
+    )
+    async def start_chapter_session_stream(
+        course_id: str,
+        chapter_id: str,
+        request: Request,
+        learner_id: str = Form(default=""),
+        learning_mode: str = Form(default="teach_first"),
+    ) -> StreamingResponse:
+        _require_loopback(request)
+        try:
+            events = await session_service.create_chapter_session_events_async(
+                course_id=course_id,
+                chapter_id=chapter_id,
+                learner_id=learner_id,
+                learning_mode=learning_mode,
+            )
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+        async def chapter_content() -> AsyncIterator[str]:
+            async for event, payload in events:
+                yield _sse(event, payload)
+
+        return StreamingResponse(
+            chapter_content(),
+            status_code=201,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @application.post(
         "/api/sessions",

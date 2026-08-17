@@ -21,6 +21,31 @@ MAX_IMAGE_MATERIALS = 3
 DEFAULT_MATERIAL_CHUNK_SIZE = 1_000
 DEFAULT_MATERIAL_CHUNK_OVERLAP = 150
 
+MAX_COURSE_SINGLE_MATERIAL_BYTES = 50 * 1024 * 1024
+MAX_COURSE_TOTAL_MATERIAL_BYTES = 100 * 1024 * 1024
+MAX_COURSE_EXTRACTED_CHARS = 1_000_000
+
+
+@dataclass(frozen=True)
+class MaterialLimits:
+    """Bounded ingestion limits; course creation uses a relaxed profile."""
+
+    max_files: int = MAX_MATERIAL_FILES
+    max_single_bytes: int = MAX_SINGLE_MATERIAL_BYTES
+    max_total_bytes: int = MAX_TOTAL_MATERIAL_BYTES
+    max_extracted_chars: int = MAX_EXTRACTED_CHARS
+    max_images: int = MAX_IMAGE_MATERIALS
+
+
+DEFAULT_MATERIAL_LIMITS = MaterialLimits()
+COURSE_MATERIAL_LIMITS = MaterialLimits(
+    max_files=1,
+    max_single_bytes=MAX_COURSE_SINGLE_MATERIAL_BYTES,
+    max_total_bytes=MAX_COURSE_TOTAL_MATERIAL_BYTES,
+    max_extracted_chars=MAX_COURSE_EXTRACTED_CHARS,
+    max_images=3,
+)
+
 MaterialSourceType = Literal[
     "pdf",
     "docx",
@@ -42,6 +67,7 @@ class MaterialInput:
     mime_type: str
     data: bytes | None = None
     source_url: str | None = None
+    limits: MaterialLimits = DEFAULT_MATERIAL_LIMITS
 
     def __post_init__(self) -> None:
         normalized_name = Path(self.source_name.strip().replace("\\", "/")).name
@@ -57,9 +83,9 @@ class MaterialInput:
             assert self.data is not None
             if not self.data:
                 raise ValueError("资料内容不能为空。")
-            if len(self.data) > MAX_SINGLE_MATERIAL_BYTES:
+            if len(self.data) > self.limits.max_single_bytes:
                 raise ValueError(
-                    f"单个资料不能超过 {MAX_SINGLE_MATERIAL_BYTES} 字节。"
+                    f"单个资料不能超过 {self.limits.max_single_bytes} 字节。"
                 )
         object.__setattr__(self, "source_name", normalized_name)
         object.__setattr__(self, "mime_type", normalized_type)
@@ -402,8 +428,9 @@ class MaterialIngestionPipeline:
         materials: Sequence[MaterialInput],
         *,
         cleanup: Literal["incremental", "full"] = "full",
+        limits: MaterialLimits | None = None,
     ) -> MaterialIngestionResult:
-        validate_material_batch(materials)
+        validate_material_batch(materials, limits=limits)
         documents = [
             document
             for material in materials
@@ -463,18 +490,23 @@ def material_inputs_from_urls(urls: Sequence[str]) -> list[MaterialInput]:
     return material_inputs_from_sources(urls)
 
 
-def validate_material_batch(materials: Sequence[MaterialInput]) -> None:
+def validate_material_batch(
+    materials: Sequence[MaterialInput],
+    *,
+    limits: MaterialLimits | None = None,
+) -> None:
     """Enforce bounded ingestion before any parser or model is called."""
 
-    if len(materials) > MAX_MATERIAL_FILES:
-        raise ValueError(f"资料数量不能超过 {MAX_MATERIAL_FILES} 个。")
+    enforced = limits or DEFAULT_MATERIAL_LIMITS
+    if len(materials) > enforced.max_files:
+        raise ValueError(f"资料数量不能超过 {enforced.max_files} 个。")
     total_bytes = sum(material.byte_size for material in materials)
-    if total_bytes > MAX_TOTAL_MATERIAL_BYTES:
+    if total_bytes > enforced.max_total_bytes:
         raise ValueError(
-            f"资料总大小不能超过 {MAX_TOTAL_MATERIAL_BYTES} 字节。"
+            f"资料总大小不能超过 {enforced.max_total_bytes} 字节。"
         )
     image_count = sum(
         material.mime_type.startswith("image/") for material in materials
     )
-    if image_count > MAX_IMAGE_MATERIALS:
-        raise ValueError(f"图片资料不能超过 {MAX_IMAGE_MATERIALS} 张。")
+    if image_count > enforced.max_images:
+        raise ValueError(f"图片资料不能超过 {enforced.max_images} 张。")

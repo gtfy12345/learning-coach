@@ -35,6 +35,7 @@ MAX_ARCHIVE_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 MAX_WEB_REDIRECTS = 3
 MAX_IMAGE_PIXELS = 25_000_000
 MAX_IMAGE_DESCRIPTION_CHARS = 8_000
+MAX_PDF_OUTLINE_ENTRIES = 200
 
 CODE_LANGUAGES = {
     ".c": "c",
@@ -127,21 +128,25 @@ def _metadata(
     return metadata
 
 
-def _decode_text(data: bytes, source_name: str) -> str:
+def _decode_text(
+    data: bytes, source_name: str, *, max_chars: int = MAX_EXTRACTED_CHARS
+) -> str:
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise MaterialLoadError(
             f"资料 {source_name} 不是有效的 UTF-8 文本。"
         ) from exc
-    return _bounded_text(text, source_name)
+    return _bounded_text(text, source_name, max_chars=max_chars)
 
 
-def _bounded_text(text: str, source_name: str) -> str:
+def _bounded_text(
+    text: str, source_name: str, *, max_chars: int = MAX_EXTRACTED_CHARS
+) -> str:
     normalized = text.strip()
-    if len(normalized) > MAX_EXTRACTED_CHARS:
+    if len(normalized) > max_chars:
         raise MaterialLoadError(
-            f"资料 {source_name} 提取文本不能超过 {MAX_EXTRACTED_CHARS} 字符。"
+            f"资料 {source_name} 提取文本不能超过 {max_chars} 字符。"
         )
     return normalized
 
@@ -164,7 +169,10 @@ def _html_documents(
     *,
     source_type: MaterialSourceType,
 ) -> list[Document]:
-    html = _decode_text(raw_content, material.source_name)
+    html = _decode_text(
+        raw_content, material.source_name,
+        max_chars=material.limits.max_extracted_chars,
+    )
     soup = BeautifulSoup(html, "html.parser")
     for element in soup(["script", "style", "noscript"]):
         element.decompose()
@@ -197,7 +205,11 @@ def _html_documents(
                     )
                 )
     else:
-        text = _bounded_text(body.get_text("\n", strip=True), material.source_name)
+        text = _bounded_text(
+            body.get_text("\n", strip=True),
+            material.source_name,
+            max_chars=material.limits.max_extracted_chars,
+        )
         if text:
             title = soup.title.get_text(" ", strip=True) if soup.title else "document"
             documents.append(
@@ -383,6 +395,47 @@ class MaterialLoaderRegistry:
         return documents
 
 
+def _pdf_outline_entries(reader: PdfReader) -> list[tuple[str, int]]:
+    """Best-effort top-level outline entries as (title, 1-based page) pairs.
+
+    Malformed outlines never block text extraction; only direct children of
+    the outline root are used so subsections stay inside their chapter.
+    """
+
+    try:
+        outline = reader.outline
+    except Exception:  # noqa: BLE001 - outline parsing must stay optional
+        return []
+    entries: list[tuple[str, int]] = []
+    for item in outline:
+        if not hasattr(item, "title"):
+            continue
+        title = str(item.title or "").strip()
+        if not title:
+            continue
+        try:
+            page_index = reader.get_destination_page_number(item)
+        except Exception:  # noqa: BLE001 - destinations can be malformed
+            continue
+        if page_index is None or page_index < 0:
+            continue
+        entries.append((title[:512], page_index + 1))
+        if len(entries) >= MAX_PDF_OUTLINE_ENTRIES:
+            break
+    return entries
+
+
+def _chapter_for_page(
+    entries: Sequence[tuple[str, int]], page_number: int
+) -> str | None:
+    chapter: str | None = None
+    for title, start_page in entries:
+        if start_page > page_number:
+            break
+        chapter = title
+    return chapter
+
+
 class PdfMaterialLoader:
     def supports(self, material: MaterialInput) -> bool:
         return material.suffix == ".pdf" or material.mime_type == "application/pdf"
@@ -392,6 +445,7 @@ class PdfMaterialLoader:
         reader = PdfReader(BytesIO(material.data))
         if reader.is_encrypted:
             raise MaterialLoadError(f"资料 {material.source_name} 受密码保护。")
+        outline_entries = _pdf_outline_entries(reader)
         documents: list[Document] = []
         total = 0
         for page_number, page in enumerate(reader.pages, start=1):
@@ -399,9 +453,10 @@ class PdfMaterialLoader:
             if not text:
                 continue
             total += len(text)
-            if total > MAX_EXTRACTED_CHARS:
+            if total > material.limits.max_extracted_chars:
                 raise MaterialLoadError(
-                    f"资料 {material.source_name} 提取文本不能超过 {MAX_EXTRACTED_CHARS} 字符。"
+                    f"资料 {material.source_name} 提取文本不能超过 "
+                    f"{material.limits.max_extracted_chars} 字符。"
                 )
             documents.append(
                 Document(
@@ -413,6 +468,7 @@ class PdfMaterialLoader:
                         location_type="page",
                         location=f"page {page_number}",
                         page=page_number,
+                        chapter=_chapter_for_page(outline_entries, page_number),
                     ),
                 )
             )
@@ -437,9 +493,10 @@ class DocxMaterialLoader:
             if not text:
                 continue
             total += len(text)
-            if total > MAX_EXTRACTED_CHARS:
+            if total > material.limits.max_extracted_chars:
                 raise MaterialLoadError(
-                    f"资料 {material.source_name} 提取文本不能超过 {MAX_EXTRACTED_CHARS} 字符。"
+                    f"资料 {material.source_name} 提取文本不能超过 "
+                    f"{material.limits.max_extracted_chars} 字符。"
                 )
             style_name = paragraph.style.name if paragraph.style is not None else ""
             if style_name.casefold().startswith("heading"):
@@ -483,9 +540,10 @@ class PptxMaterialLoader:
             if not text:
                 continue
             total += len(text)
-            if total > MAX_EXTRACTED_CHARS:
+            if total > material.limits.max_extracted_chars:
                 raise MaterialLoadError(
-                    f"资料 {material.source_name} 提取文本不能超过 {MAX_EXTRACTED_CHARS} 字符。"
+                    f"资料 {material.source_name} 提取文本不能超过 "
+                    f"{material.limits.max_extracted_chars} 字符。"
                 )
             documents.append(
                 Document(
@@ -514,6 +572,8 @@ class EpubMaterialLoader:
         documents: list[Document] = []
         total = 0
         for item in book.get_items_of_type(ITEM_DOCUMENT):
+            if isinstance(item, epub.EpubNav):
+                continue  # nav scaffolding duplicates the real chapters
             soup = BeautifulSoup(item.get_content(), "html.parser")
             for element in soup(["script", "style", "noscript"]):
                 element.decompose()
@@ -521,9 +581,10 @@ class EpubMaterialLoader:
             if not text:
                 continue
             total += len(text)
-            if total > MAX_EXTRACTED_CHARS:
+            if total > material.limits.max_extracted_chars:
                 raise MaterialLoadError(
-                    f"资料 {material.source_name} 提取文本不能超过 {MAX_EXTRACTED_CHARS} 字符。"
+                    f"资料 {material.source_name} 提取文本不能超过 "
+                    f"{material.limits.max_extracted_chars} 字符。"
                 )
             heading_node = soup.find(["h1", "h2", "h3"])
             chapter = (
@@ -572,7 +633,11 @@ class WebMaterialLoader:
             source_url=fetched.final_url,
         )
         if fetched.content_type in {"text/plain", "text/markdown"}:
-            text = _decode_text(fetched.content, material.source_name)
+            text = _decode_text(
+                fetched.content,
+                material.source_name,
+                max_chars=material.limits.max_extracted_chars,
+            )
             return [
                 Document(
                     page_content=text,
@@ -681,7 +746,11 @@ class CodeMaterialLoader:
 
     def load(self, material: MaterialInput) -> list[Document]:
         assert material.data is not None
-        text = _decode_text(material.data, material.source_name)
+        text = _decode_text(
+            material.data,
+            material.source_name,
+            max_chars=material.limits.max_extracted_chars,
+        )
         if not text:
             return []
         lines = text.splitlines()
@@ -713,7 +782,11 @@ class TextMaterialLoader:
 
     def load(self, material: MaterialInput) -> list[Document]:
         assert material.data is not None
-        text = _decode_text(material.data, material.source_name)
+        text = _decode_text(
+            material.data,
+            material.source_name,
+            max_chars=material.limits.max_extracted_chars,
+        )
         if not text:
             return []
         return [

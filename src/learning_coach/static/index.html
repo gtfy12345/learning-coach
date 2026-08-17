@@ -42,9 +42,20 @@
           <p class="hero-copy">
             输入一个学习主题。教练默认先教学再检查理解，随后用迁移练习评价；
             你也可以切换为先诊断，快速定位已有基础和知识缺口。
+            想系统读完一份资料时，切换到「资料课程」，整本书自动拆成章节，逐章讲解出题。
           </p>
 
-          <form id="start-form" class="start-card">
+          <div class="entry-tabs" role="tablist" aria-label="学习入口">
+            <button type="button" id="tab-topic" role="tab" aria-selected="true" aria-controls="topic-entry">
+              主题学习
+            </button>
+            <button type="button" id="tab-course" role="tab" aria-selected="false" aria-controls="course-entry">
+              资料课程 · 整本拆章
+            </button>
+          </div>
+
+          <div id="topic-entry" role="tabpanel" aria-labelledby="tab-topic">
+            <form id="start-form" class="start-card">
             <label for="topic">今天想学什么？</label>
             <div class="topic-row">
               <input
@@ -158,6 +169,50 @@
             </label>
             <p class="form-error" id="setup-error" role="alert"></p>
           </form>
+          </div>
+
+          <div id="course-entry" role="tabpanel" aria-labelledby="tab-course" hidden>
+            <form id="course-form" class="start-card" aria-busy="false">
+              <label class="upload-box" for="course-book">
+                <span class="upload-icon" aria-hidden="true">＋</span>
+                <span>
+                  <strong id="course-book-title">上传一本书，自动拆成章节课程</strong>
+                  <small>EPUB、PDF、DOCX、PPTX、HTML、TXT · 单文件最大 50 MiB · 正文只存内存</small>
+                </span>
+                <input
+                  id="course-book"
+                  name="course_book"
+                  type="file"
+                  accept=".epub,.pdf,.docx,.pptx,.html,.htm,.txt,.md,.markdown"
+                />
+              </label>
+              <label class="material-box" for="course-learner">
+                <span>
+                  <strong>学习者标识</strong>
+                  <small>相同标识累计章节进度；与主题学习共用长期记忆</small>
+                </span>
+                <input
+                  id="course-learner"
+                  name="course_learner"
+                  type="text"
+                  maxlength="100"
+                  placeholder="默认 local-learner"
+                />
+              </label>
+              <div class="settings-actions">
+                <button class="primary-button" id="create-course" type="submit">
+                  <span>生成章节课程</span><span aria-hidden="true">→</span>
+                </button>
+              </div>
+              <p class="form-error" id="course-error" role="alert"></p>
+              <p class="cost-notice">
+                有目录的书按真实章节拆分；无目录的 PDF 按页码分段成讲。
+                每章是一个完整学习闭环（讲解、理解检查、练习、评价），
+                进度保存在长期记忆存储；服务重启后重传同一份书即可继续。
+              </p>
+            </form>
+            <div id="course-list" class="course-list" aria-live="polite"></div>
+          </div>
 
           <div class="feature-strip" aria-label="学习流程">
             <div><span>01</span><strong>讲清</strong><small>先建立关键理解</small></div>
@@ -173,9 +228,14 @@
               <p class="eyebrow">LEARNING SESSION</p>
               <h1 id="session-topic">学习主题</h1>
             </div>
-            <button class="text-button" id="restart-button" type="button">
-              重新开始
-            </button>
+            <div class="session-heading-actions">
+              <button class="text-button" id="back-to-course" type="button" hidden>
+                ← 返回课程
+              </button>
+              <button class="text-button" id="restart-button" type="button">
+                重新开始
+              </button>
+            </div>
           </div>
 
           <div class="timeline" id="timeline" aria-live="polite"></div>

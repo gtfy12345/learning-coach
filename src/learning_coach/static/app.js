@@ -50,11 +50,23 @@ const codeStarter = document.querySelector("#code-starter");
 const codeTestResults = document.querySelector("#code-test-results");
 const codeHints = document.querySelector("#code-hints");
 const codeSafetyNotice = document.querySelector("#code-safety-notice");
+const tabTopicButton = document.querySelector("#tab-topic");
+const tabCourseButton = document.querySelector("#tab-course");
+const topicEntry = document.querySelector("#topic-entry");
+const courseEntry = document.querySelector("#course-entry");
+const courseForm = document.querySelector("#course-form");
+const courseBookInput = document.querySelector("#course-book");
+const courseBookTitle = document.querySelector("#course-book-title");
+const courseLearnerInput = document.querySelector("#course-learner");
+const courseList = document.querySelector("#course-list");
+const courseError = document.querySelector("#course-error");
+const backToCourseButton = document.querySelector("#back-to-course");
 
 let sessionId = null;
 let activeController = null;
 let currentCodeExercise = null;
 let currentLearningMode = "teach_first";
+let activeCourse = null;
 
 function errorDetail(error) {
   const detail = error?.detail;
@@ -428,12 +440,25 @@ function showResult(data) {
     stageCard.hidden = true;
   }
   setProgress("summary", true);
+  refreshActiveCourseProgress();
   resultCard.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function enterSession(finalState) {
+  sessionId = finalState.session_id;
+  currentLearningMode = finalState.learning_mode || currentLearningMode;
+  setupView.hidden = true;
+  sessionView.hidden = false;
+  document.querySelector("#session-topic").textContent = finalState.topic;
+  backToCourseButton.hidden = !finalState.course;
+  showQuestion(finalState);
+  answerInput.focus();
 }
 
 startForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   setupError.textContent = "";
+  activeCourse = null;
   currentLearningMode = learningModeInput.value;
   setLoading(startForm, true);
   const formData = new FormData();
@@ -471,13 +496,7 @@ startForm.addEventListener("submit", async (event) => {
       },
     );
     if (!finalState) throw { detail: "模型运行没有返回最终状态。" };
-    sessionId = finalState.session_id;
-    currentLearningMode = finalState.learning_mode || learningModeInput.value;
-    setupView.hidden = true;
-    sessionView.hidden = false;
-    document.querySelector("#session-topic").textContent = finalState.topic;
-    showQuestion(finalState);
-    answerInput.focus();
+    enterSession(finalState);
   } catch (error) {
     setupError.textContent = error.name === "AbortError" ? "已停止本次生成。" : errorDetail(error);
   } finally {
@@ -486,6 +505,211 @@ startForm.addEventListener("submit", async (event) => {
     setLoading(startForm, false);
   }
 });
+
+function switchEntryTab(tab) {
+  const isTopic = tab === "topic";
+  tabTopicButton.setAttribute("aria-selected", String(isTopic));
+  tabCourseButton.setAttribute("aria-selected", String(!isTopic));
+  topicEntry.hidden = !isTopic;
+  courseEntry.hidden = isTopic;
+  if (!isTopic) loadCourseList();
+}
+
+tabTopicButton.addEventListener("click", () => switchEntryTab("topic"));
+tabCourseButton.addEventListener("click", () => switchEntryTab("course"));
+
+function courseLearnerId() {
+  return (
+    courseLearnerInput.value.trim()
+    || learnerIdInput.value.trim()
+    || "local-learner"
+  );
+}
+
+const CHAPTER_STATUS_LABELS = {
+  not_started: "未开始",
+  in_progress: "学习中",
+  completed: "已完成",
+};
+
+function renderCourseCard(course) {
+  const card = document.createElement("article");
+  card.className = "course-card";
+  card.dataset.courseId = course.course_id;
+
+  const heading = document.createElement("div");
+  heading.className = "course-card-heading";
+  const titleBlock = document.createElement("div");
+  const title = document.createElement("h3");
+  title.textContent = course.book_title;
+  const meta = document.createElement("p");
+  const average = course.average_score !== null && course.average_score !== undefined
+    ? ` · 平均 ${course.average_score} 分`
+    : "";
+  const total = course.chapters_total ?? course.chapters.length;
+  meta.textContent = `已完成 ${course.completed_chapters} / ${total} 章${average}`;
+  titleBlock.append(title, meta);
+  heading.append(titleBlock);
+  if (course.next_chapter_id) {
+    const hint = document.createElement("span");
+    hint.className = "chapter-status in_progress";
+    hint.textContent = `建议继续：第 ${course.next_chapter_id} 章`;
+    heading.append(hint);
+  }
+  card.append(heading);
+
+  const chapters = document.createElement("div");
+  chapters.className = "course-chapters";
+  course.chapters.forEach((chapter) => {
+    const row = document.createElement("div");
+    row.className = "course-chapter";
+    const order = document.createElement("span");
+    order.className = "course-chapter-order";
+    order.textContent = chapter.chapter_id;
+    const main = document.createElement("div");
+    main.className = "course-chapter-main";
+    const name = document.createElement("strong");
+    name.textContent = chapter.title;
+    main.append(name);
+    if (chapter.location) {
+      const location = document.createElement("small");
+      location.textContent = `${chapter.location} · ${chapter.chunks} 个片段`;
+      main.append(location);
+    }
+    const status = document.createElement("span");
+    status.className = `chapter-status ${chapter.status}`;
+    status.textContent = chapter.status === "completed" && chapter.score !== null
+      ? `已完成 · ${chapter.score} 分`
+      : CHAPTER_STATUS_LABELS[chapter.status] || chapter.status;
+    const start = document.createElement("button");
+    start.type = "button";
+    start.className = "primary-button";
+    const startLabel = chapter.status === "completed"
+      ? "再学一遍"
+      : chapter.status === "in_progress"
+        ? "继续本章"
+        : "开始学习";
+    start.innerHTML = `<span>${startLabel}</span><span aria-hidden="true">→</span>`;
+    start.addEventListener("click", () => {
+      startChapterSession(course.course_id, chapter.chapter_id);
+    });
+    row.append(order, main, status, start);
+    chapters.append(row);
+  });
+  card.append(chapters);
+  return card;
+}
+
+async function loadCourseList() {
+  try {
+    const courses = await request(
+      `/api/learners/${encodeURIComponent(courseLearnerId())}/courses`,
+    );
+    courseList.replaceChildren(
+      ...courses.map((course) => renderCourseCard(course)),
+    );
+    if (!courses.length) {
+      const empty = document.createElement("p");
+      empty.className = "hero-copy";
+      empty.textContent = "还没有课程。上传一本书开始第一节。";
+      courseList.append(empty);
+    }
+  } catch (error) {
+    courseError.textContent = errorDetail(error);
+  }
+}
+
+async function refreshActiveCourseProgress() {
+  if (!activeCourse) return;
+  try {
+    const detail = await request(
+      `/api/courses/${activeCourse.courseId}?learner_id=${encodeURIComponent(activeCourse.learnerId)}`,
+    );
+    const card = renderCourseCard(detail);
+    const existing = courseList.querySelector(
+      `[data-course-id="${activeCourse.courseId}"]`,
+    );
+    if (existing) existing.replaceWith(card);
+    else courseList.prepend(card);
+  } catch {
+    /* 进度刷新失败不打断学习会话 */
+  }
+}
+
+courseForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  courseError.textContent = "";
+  const book = courseBookInput.files[0];
+  if (!book) {
+    courseError.textContent = "请先选择一本书或一份课件。";
+    return;
+  }
+  setLoading(courseForm, true);
+  try {
+    const formData = new FormData();
+    formData.append("learner_id", courseLearnerId());
+    formData.append("book", book);
+    const course = await request("/api/courses", { method: "POST", body: formData });
+    const card = renderCourseCard(course);
+    const existing = courseList.querySelector(`[data-course-id="${course.course_id}"]`);
+    if (existing) existing.replaceWith(card);
+    else courseList.prepend(card);
+    courseBookInput.value = "";
+    courseBookTitle.textContent = "上传一本书，自动拆成章节课程";
+  } catch (error) {
+    courseError.textContent = errorDetail(error);
+  } finally {
+    setLoading(courseForm, false);
+  }
+});
+
+courseBookInput.addEventListener("change", () => {
+  const file = courseBookInput.files[0];
+  if (file) courseBookTitle.textContent = `已选择：${file.name}`;
+  else courseBookTitle.textContent = "上传一本书，自动拆成章节课程";
+});
+
+async function startChapterSession(courseId, chapterId) {
+  courseError.textContent = "";
+  activeCourse = { courseId, learnerId: courseLearnerId() };
+  const formData = new FormData();
+  formData.append("learner_id", activeCourse.learnerId);
+  formData.append("learning_mode", "teach_first");
+  activeController = new AbortController();
+  let finalState = null;
+  try {
+    await requestStream(
+      `/api/courses/${courseId}/chapters/${chapterId}/sessions/stream`,
+      { method: "POST", body: formData, signal: activeController.signal },
+      (eventName, payload) => {
+        if (eventName === "status") setProgress(payload.task);
+        if (eventName === "state") finalState = payload;
+        if (eventName === "error") throw { detail: payload.message };
+      },
+    );
+    if (!finalState) throw { detail: "模型运行没有返回最终状态。" };
+    enterSession(finalState);
+  } catch (error) {
+    courseError.textContent = error.name === "AbortError"
+      ? "已停止本次生成。"
+      : errorDetail(error);
+    activeCourse = null;
+  } finally {
+    activeController = null;
+  }
+}
+
+backToCourseButton.addEventListener("click", () => {
+  activeController?.abort();
+  activeController = null;
+  sessionId = null;
+  activeCourse = null;
+  sessionView.hidden = true;
+  setupView.hidden = false;
+  backToCourseButton.hidden = true;
+  switchEntryTab("course");
+});
+
 
 async function submitAnswerStream(answer, echoLabel) {
   answerError.textContent = "";
@@ -656,12 +880,14 @@ materialsInput.addEventListener("change", () => {
 
 document.querySelector("#restart-button").addEventListener("click", () => {
   sessionId = null;
+  activeCourse = null;
   currentLearningMode = learningModeInput.value;
   timeline.replaceChildren();
   resultCard.hidden = true;
   answerCard.hidden = false;
   sessionView.hidden = true;
   setupView.hidden = false;
+  backToCourseButton.hidden = true;
   answerInput.value = "";
   activeController?.abort();
   activeController = null;
