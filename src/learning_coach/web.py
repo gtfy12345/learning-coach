@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import os
 import threading
@@ -8,13 +9,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.types import Command
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from learning_coach.auth import run_auth_action
 from learning_coach.graph import build_learning_graph
 from learning_coach.hybrid_rag import RagSettings
 from learning_coach.ingestion import (
@@ -33,6 +35,13 @@ from learning_coach.context import (
 )
 from learning_coach.media import MAX_IMAGE_BYTES, image_bytes_content_block
 from learning_coach.model import LearningCoachModels, ModelSettings, create_model_suite
+from learning_coach.model_config import (
+    ApiModelConfigInput,
+    PublicRuntimeModelConfig,
+    RuntimeModelConfigService,
+    RuntimeModelVersion,
+    TestedRuntimeModelConfig,
+)
 from learning_coach.memory import (
     compare_learning_states,
     create_checkpointer,
@@ -143,6 +152,22 @@ class ForkRequest(BaseModel):
         return normalized
 
 
+class ApplyModelConfigRequest(BaseModel):
+    auth_mode: Literal["api", "cli"]
+    test_id: str | None = Field(default=None, max_length=64)
+    chat_model_id: str | None = Field(default=None, max_length=200)
+    assessment_model_id: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self) -> "ApplyModelConfigRequest":
+        if self.auth_mode == "api":
+            if not (self.test_id or "").strip():
+                raise ValueError("API 配置必须提供已通过测试的 test_id。")
+        elif not (self.chat_model_id or "").strip():
+            raise ValueError("CLI 配置必须提供 chat_model_id。")
+        return self
+
+
 class SessionView(BaseModel):
     session_id: str
     status: Literal["waiting", "completed"]
@@ -217,6 +242,8 @@ class LearningSessionService:
         web_fetcher: SafeWebFetcher | None = None,
         checkpointer: Any | None = None,
         store: Any | None = None,
+        runtime_config_service: RuntimeModelConfigService | None = None,
+        auth_action: Callable[[str, str], int] = run_auth_action,
     ) -> None:
         self._models = models
         self._models_factory = models_factory
@@ -239,6 +266,7 @@ class LearningSessionService:
         self._sessions: set[str] = set()
         self._runtime_contexts: dict[str, LearningRuntimeContext] = {}
         self._session_run_locks: dict[str, asyncio.Lock] = {}
+        self._session_runtimes: dict[str, RuntimeModelVersion] = {}
         self._context_settings = context_settings or LearningContextSettings.from_environ(
             os.environ
         )
@@ -249,20 +277,106 @@ class LearningSessionService:
             self._store = create_memory_store(os.environ)
         self._setup_lock = threading.Lock()
         self._invoke_lock = threading.Lock()
+        self._runtime_config = runtime_config_service or RuntimeModelConfigService(
+            runtime_builder=lambda models: build_learning_graph(
+                models,
+                checkpointer=self._checkpointer,
+                store=self._store,
+            )
+        )
+        self._auth_action = auth_action
+        self._auth_locks = {
+            "codex": threading.Lock(),
+            "claude": threading.Lock(),
+        }
 
-    def _ensure_graph(self) -> Any:
-        if self._graph is not None:
-            return self._graph
+    @property
+    def runtime_config(self) -> RuntimeModelConfigService:
+        return self._runtime_config
+
+    def public_runtime_config(self) -> PublicRuntimeModelConfig:
+        return self._ensure_runtime().config
+
+    def test_runtime_config(
+        self, request: ApiModelConfigInput
+    ) -> TestedRuntimeModelConfig:
+        self._ensure_runtime()
+        return self._runtime_config.test_api_config(request)
+
+    def apply_runtime_config(
+        self, request: ApplyModelConfigRequest
+    ) -> PublicRuntimeModelConfig:
+        self._ensure_runtime()
+        if request.auth_mode == "api":
+            assert request.test_id is not None
+            return self._runtime_config.apply_tested(request.test_id).config
+        assert request.chat_model_id is not None
+        return self._runtime_config.apply_cli(
+            chat_model_id=request.chat_model_id,
+            assessment_model_id=request.assessment_model_id,
+        ).config
+
+    def run_model_auth(self, provider: str, action: str) -> None:
+        if provider not in self._auth_locks:
+            raise ValueError("仅支持 codex 或 claude 官方 CLI。")
+        if action not in {"login", "status", "logout"}:
+            raise ValueError("不支持的认证动作。")
+        with self._auth_locks[provider]:
+            self._auth_action(provider, action)
+
+    def _ensure_runtime(self) -> RuntimeModelVersion:
+        try:
+            runtime = self._runtime_config.current()
+        except RuntimeError:
+            runtime = None
+        if runtime is not None:
+            self._models = runtime.models
+            self._graph = runtime.runtime
+            return runtime
+
         with self._setup_lock:
-            if self._graph is None:
+            try:
+                runtime = self._runtime_config.current()
+            except RuntimeError:
+                runtime = None
+            if runtime is None:
                 if self._models is None:
                     self._models = self._models_factory()
-                self._graph = build_learning_graph(
+                graph = self._graph or build_learning_graph(
                     self._models,
                     checkpointer=self._checkpointer,
                     store=self._store,
                 )
-        return self._graph
+                chat_model_id = self._chat_model_id
+                assessment_model_id = self._assessment_model_id
+                if chat_model_id is None or assessment_model_id is None:
+                    load_dotenv()
+                    settings = ModelSettings.from_environ(os.environ)
+                    chat_model_id = chat_model_id or settings.chat_model_id
+                    assessment_model_id = (
+                        assessment_model_id or settings.assessment_model_id
+                    )
+                auth_mode = (
+                    "cli"
+                    if chat_model_id.startswith(("codex_cli:", "claude_code:"))
+                    and assessment_model_id.startswith(
+                        ("codex_cli:", "claude_code:")
+                    )
+                    else "api"
+                )
+                runtime = self._runtime_config.install_initial(
+                    models=self._models,
+                    runtime=graph,
+                    chat_model_id=chat_model_id,
+                    assessment_model_id=assessment_model_id,
+                    auth_mode=auth_mode,
+                )
+        self._models = runtime.models
+        self._graph = runtime.runtime
+        return runtime
+
+    def _ensure_graph(self) -> Any:
+        return self._ensure_runtime().runtime
 
     def public_config(self) -> PublicModelConfig:
         try:
@@ -317,6 +431,8 @@ class LearningSessionService:
         materials: Sequence[MaterialInput] = (),
         learner_id: str = "",
         learning_mode: str | None = None,
+        *,
+        _runtime: RuntimeModelVersion | None = None,
     ) -> dict[str, Any]:
         normalized_topic = topic.strip()
         if not normalized_topic:
@@ -325,9 +441,8 @@ class LearningSessionService:
             raise ValueError("学习主题不能超过 500 个字符。")
         normalized_learner = learner_id.strip()[:100]
 
-        self._ensure_graph()
-        assert self._models is not None
-        if image_blocks and not self._models.accepts_images:
+        runtime = _runtime or self._ensure_runtime()
+        if image_blocks and not runtime.models.accepts_images:
             raise ValueError("当前主模型不支持图片输入，请移除图片或更换视觉模型。")
 
         runtime_context = create_learning_runtime_context(
@@ -366,8 +481,8 @@ class LearningSessionService:
             ingestion = MaterialIngestionPipeline(
                 default_loader_registry(
                     web_fetcher=self._web_fetcher,
-                    image_model=self._models.chat,
-                    accepts_images=self._models.accepts_images,
+                    image_model=runtime.models.chat,
+                    accepts_images=runtime.models.accepts_images,
                 )
             ).ingest(ingestion_materials)
             initial_state["study_chunks"] = [
@@ -388,7 +503,8 @@ class LearningSessionService:
         learner_id: str = "",
         learning_mode: str | None = None,
     ) -> SessionView:
-        graph = self._ensure_graph()
+        runtime = self._ensure_runtime()
+        graph = runtime.runtime
         session_id = uuid.uuid4().hex
         initial_state = self._initial_state(
             topic,
@@ -398,6 +514,7 @@ class LearningSessionService:
             materials,
             learner_id,
             learning_mode,
+            _runtime=runtime,
         )
         runtime_context = create_learning_runtime_context(
             initial_state["topic"],
@@ -418,6 +535,7 @@ class LearningSessionService:
             )
         self._sessions.add(session_id)
         self._runtime_contexts[session_id] = runtime_context
+        self._session_runtimes[session_id] = runtime
         return self._view(session_id, result)
 
     def create_session_events(
@@ -430,6 +548,7 @@ class LearningSessionService:
         learner_id: str = "",
         learning_mode: str | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        runtime = self._ensure_runtime()
         initial_state = self._initial_state(
             topic,
             image_blocks,
@@ -438,8 +557,9 @@ class LearningSessionService:
             materials,
             learner_id,
             learning_mode,
+            _runtime=runtime,
         )
-        return self._events_for_initial_state(initial_state)
+        return self._events_for_initial_state(initial_state, runtime)
 
     async def create_session_events_async(
         self,
@@ -453,6 +573,7 @@ class LearningSessionService:
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         """Prepare blocking material ingestion off-loop, then stream the graph."""
 
+        runtime = self._ensure_runtime()
         initial_state = await asyncio.to_thread(
             self._initial_state,
             topic,
@@ -462,13 +583,17 @@ class LearningSessionService:
             materials,
             learner_id,
             learning_mode,
+            _runtime=runtime,
         )
-        return self._events_for_initial_state(initial_state)
+        return self._events_for_initial_state(initial_state, runtime)
 
     def _events_for_initial_state(
-        self, initial_state: dict[str, Any]
+        self,
+        initial_state: dict[str, Any],
+        runtime: RuntimeModelVersion | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         session_id = uuid.uuid4().hex
+        self._session_runtimes[session_id] = runtime or self._ensure_runtime()
         self._runtime_contexts[session_id] = create_learning_runtime_context(
             initial_state["topic"],
             learning_goal=initial_state["learning_goal"],
@@ -483,7 +608,7 @@ class LearningSessionService:
     def answer(self, session_id: str, answer: str) -> SessionView:
         normalized_answer = self._validated_answer(session_id, answer)
 
-        graph = self._ensure_graph()
+        graph = self._runtime_for_session(session_id).runtime
         config = session_run_config(session_id)
         with self._invoke_lock:
             result = graph.invoke(
@@ -513,10 +638,21 @@ class LearningSessionService:
             raise ValueError("回答不能超过 20000 个字符。")
         return normalized_answer
 
+    def _runtime_for_session(self, session_id: str) -> RuntimeModelVersion:
+        try:
+            return self._session_runtimes[session_id]
+        except KeyError as exc:
+            raise SessionNotFoundError(
+                "找不到该学习会话；服务重启后请重新开始。"
+            ) from exc
+
+    def session_runtime_version(self, session_id: str) -> int:
+        return self._runtime_for_session(session_id).config.version
+
     def session_history(self, session_id: str) -> list[CheckpointMilestone]:
         if session_id not in self._sessions:
             raise SessionNotFoundError("找不到该学习会话；服务重启后请重新开始。")
-        graph = self._ensure_graph()
+        graph = self._runtime_for_session(session_id).runtime
         return list_session_checkpoints(
             graph, {"configurable": {"thread_id": f"web-{session_id}"}}
         )
@@ -528,7 +664,8 @@ class LearningSessionService:
             raise SessionNotFoundError("找不到该学习会话；服务重启后请重新开始。")
         if not checkpoint_id.strip():
             raise ValueError("checkpoint_id 不能为空。")
-        graph = self._ensure_graph()
+        runtime = self._runtime_for_session(session_id)
+        graph = runtime.runtime
         fork_session_id = uuid.uuid4().hex
         fork_result = fork_session(
             graph,
@@ -545,6 +682,7 @@ class LearningSessionService:
             )
         self._sessions.add(fork_session_id)
         self._runtime_contexts[fork_session_id] = runtime_context
+        self._session_runtimes[fork_session_id] = runtime
         view = self._view(fork_session_id, result)
         comparison = compare_learning_states(
             fork_result["baseline"], result
@@ -591,6 +729,7 @@ class LearningSessionService:
             timed_out = True
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
+                self._session_runtimes.pop(session_id, None)
         finally:
             try:
                 if iterator is not None:
@@ -600,6 +739,7 @@ class LearningSessionService:
                     lock.release()
                 if register_session and session_id not in self._sessions:
                     self._runtime_contexts.pop(session_id, None)
+                    self._session_runtimes.pop(session_id, None)
                     if self._session_run_locks.get(session_id) is lock:
                         self._session_run_locks.pop(session_id, None)
         if timed_out:
@@ -616,7 +756,7 @@ class LearningSessionService:
         *,
         register_session: bool,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        graph = self._ensure_graph()
+        graph = self._runtime_for_session(session_id).runtime
         config = session_run_config(
             session_id,
             has_study_material=(
@@ -650,10 +790,12 @@ class LearningSessionService:
         except asyncio.CancelledError:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
+                self._session_runtimes.pop(session_id, None)
             raise
         except Exception:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
+                self._session_runtimes.pop(session_id, None)
             yield "error", {
                 "code": "run_failed",
                 "message": "本次模型运行失败，请检查配置后重试。",
@@ -664,6 +806,7 @@ class LearningSessionService:
         if latest_state is None:
             if register_session:
                 self._runtime_contexts.pop(session_id, None)
+                self._session_runtimes.pop(session_id, None)
             yield "error", {
                 "code": "empty_run",
                 "message": "本次模型运行没有返回状态，请重试。",
@@ -851,6 +994,38 @@ async def _read_material_inputs(
             await upload.close()
 
 
+def _require_loopback(request: Request) -> None:
+    host = request.client.host if request.client is not None else ""
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host.lower() == "localhost"
+    if not is_loopback:
+        raise HTTPException(
+            status_code=403,
+            detail="模型设置与认证接口仅允许从本机访问。",
+        )
+
+
+def _require_sensitive_write(request: Request) -> None:
+    _require_loopback(request)
+    content_type = request.headers.get("content-type", "").lower()
+    if not content_type.startswith("application/json"):
+        raise HTTPException(
+            status_code=403,
+            detail="模型设置与认证写操作只接受同源 JSON 请求。",
+        )
+    origin = request.headers.get("origin", "").rstrip("/")
+    expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}".rstrip(
+        "/"
+    )
+    if not origin or origin != expected_origin:
+        raise HTTPException(
+            status_code=403,
+            detail="模型设置与认证写操作只接受同源 JSON 请求。",
+        )
+
+
 def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     session_service = service or LearningSessionService()
     application = FastAPI(
@@ -876,6 +1051,79 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     )
     def config() -> PublicModelConfig:
         return session_service.public_config()
+
+    @application.get(
+        "/api/model-config",
+        response_model=PublicRuntimeModelConfig,
+    )
+    def model_config(request: Request) -> PublicRuntimeModelConfig:
+        _require_loopback(request)
+        try:
+            return session_service.public_runtime_config()
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.post(
+        "/api/model-config/test",
+        response_model=TestedRuntimeModelConfig,
+    )
+    def test_model_config(
+        request: Request,
+        payload: ApiModelConfigInput,
+    ) -> TestedRuntimeModelConfig:
+        _require_sensitive_write(request)
+        try:
+            return session_service.test_runtime_config(payload)
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.put(
+        "/api/model-config",
+        response_model=PublicRuntimeModelConfig,
+    )
+    def apply_model_config(
+        request: Request,
+        payload: ApplyModelConfigRequest,
+    ) -> PublicRuntimeModelConfig:
+        _require_sensitive_write(request)
+        try:
+            return session_service.apply_runtime_config(payload)
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.get("/api/model-auth/{provider}/status")
+    async def model_auth_status(
+        provider: Literal["codex", "claude"],
+        request: Request,
+    ) -> dict[str, Any]:
+        _require_loopback(request)
+        try:
+            await run_in_threadpool(
+                session_service.run_model_auth, provider, "status"
+            )
+            return {"provider": provider, "action": "status", "ok": True}
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
+
+    @application.post("/api/model-auth/{provider}/{action}")
+    async def model_auth_write(
+        provider: Literal["codex", "claude"],
+        action: Literal["login", "logout"],
+        request: Request,
+    ) -> dict[str, Any]:
+        _require_sensitive_write(request)
+        try:
+            await run_in_threadpool(
+                session_service.run_model_auth, provider, action
+            )
+            return {"provider": provider, "action": action, "ok": True}
+        except Exception as exc:
+            _raise_http_error(exc)
+            raise
 
     @application.post(
         "/api/sessions",

@@ -243,12 +243,23 @@ class LearningCoachModels:
         )
 
 
-def _create_chat_model(model_id: str, *, cli_timeout_seconds: int = 300) -> Any:
+def _create_chat_model(
+    model_id: str,
+    *,
+    cli_timeout_seconds: int = 300,
+    api_keys: Mapping[str, str] | None = None,
+) -> Any:
     if is_cli_model_id(model_id):
         return create_cli_chat_model(
             model_id, timeout_seconds=cli_timeout_seconds
         )
-    return init_chat_model(model_id, temperature=0)
+    provider = model_id.partition(":")[0]
+    model_kwargs: dict[str, Any] = {"temperature": 0}
+    api_key = (api_keys or {}).get(provider)
+    if api_key:
+        key_name = "google_api_key" if provider == "google_genai" else "api_key"
+        model_kwargs[key_name] = api_key
+    return init_chat_model(model_id, **model_kwargs)
 
 
 def create_chat_model() -> Any:
@@ -267,16 +278,27 @@ def create_model_suite() -> LearningCoachModels:
 
     load_dotenv()
     settings = ModelSettings.from_environ(os.environ)
+    return create_model_suite_from_settings(settings)
+
+
+def create_model_suite_from_settings(
+    settings: ModelSettings,
+    api_keys: Mapping[str, str] | None = None,
+) -> LearningCoachModels:
+    """Create a suite from explicit in-memory settings without mutating env."""
+
     models_by_id: dict[str, Any] = {}
 
     def model_for(model_id: str | None) -> Any | None:
         if model_id is None:
             return None
         if model_id not in models_by_id:
-            models_by_id[model_id] = _create_chat_model(
-                model_id,
-                cli_timeout_seconds=settings.cli_timeout_seconds,
-            )
+            kwargs: dict[str, Any] = {
+                "cli_timeout_seconds": settings.cli_timeout_seconds
+            }
+            if api_keys is not None:
+                kwargs["api_keys"] = api_keys
+            models_by_id[model_id] = _create_chat_model(model_id, **kwargs)
         return models_by_id[model_id]
 
     chat_model = model_for(settings.chat_model_id)

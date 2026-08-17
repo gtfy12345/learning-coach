@@ -14,9 +14,9 @@
 
 ## Phase 2: 内存模型配置与官方 CLI 认证
 
-- [ ] 2.1 实现脱敏的进程内 RuntimeModelConfigService 与测试门禁
-- [ ] 2.2 绑定会话与模型运行时版本
-- [ ] 2.3 增加回环限定的配置与认证 API
+- [x] 2.1 实现脱敏的进程内 RuntimeModelConfigService 与测试门禁
+- [x] 2.2 绑定会话与模型运行时版本
+- [x] 2.3 增加回环限定的配置与认证 API
 
 ## Phase 3: Web 设置页与学习模式入口
 

@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 import threading
 import time
@@ -10,6 +11,9 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from learning_coach.model import LearningCoachModels
+from learning_coach.model_config import RuntimeModelConfigService
+from learning_coach.graph import build_learning_graph
+from learning_coach.memory import create_checkpointer, create_memory_store
 from learning_coach.loaders import SafeWebFetcher
 from learning_coach.schemas import Assessment, Diagnostic
 from learning_coach.web import (
@@ -99,6 +103,15 @@ def make_client(
         web_fetcher=web_fetcher,
     )
     return TestClient(create_app(service=service)), model
+
+
+class TaggedChatModel(FakeChatModel):
+    def __init__(self, tag: str) -> None:
+        super().__init__()
+        self.responses = itertools.cycle(
+            [f"{tag} 教学", f"{tag} 练习", f"{tag} 小结"]
+        )
+        self.scores = itertools.repeat(86)
 
 
 def test_home_page_exposes_the_learning_product() -> None:
@@ -329,6 +342,73 @@ def test_web_initial_state_records_explicit_learning_mode_with_teach_first_defau
 
     assert default_state["learning_mode"] == "teach_first"
     assert diagnostic_state["learning_mode"] == "diagnose_first"
+
+
+def test_sessions_keep_the_runtime_version_bound_at_creation() -> None:
+    checkpointer = create_checkpointer({})
+    store = create_memory_store({})
+    old_models = LearningCoachModels.from_models(TaggedChatModel("旧模型"))
+    new_models = LearningCoachModels.from_models(TaggedChatModel("新模型"))
+
+    def models_builder(settings, _api_keys):
+        assert settings.chat_model_id == "claude_code:default"
+        return new_models
+
+    def graph_builder(models):
+        return build_learning_graph(
+            models, checkpointer=checkpointer, store=store
+        )
+
+    runtime_config = RuntimeModelConfigService(
+        models_builder=models_builder,
+        runtime_builder=graph_builder,
+        validator=lambda models: None,
+    )
+    runtime_config.install_initial(
+        models=old_models,
+        runtime=graph_builder(old_models),
+        chat_model_id="codex_cli:default",
+        assessment_model_id="codex_cli:default",
+        auth_mode="cli",
+    )
+    service = LearningSessionService(
+        runtime_config_service=runtime_config,
+        checkpointer=checkpointer,
+        store=store,
+    )
+    old_json = service.create_session(
+        "旧同步会话", learning_mode="diagnose_first"
+    )
+
+    async def start_old_stream() -> dict[str, Any]:
+        events = service.create_session_events(
+            "旧流式会话", learning_mode="diagnose_first"
+        )
+        payloads = [payload async for event, payload in events if event == "state"]
+        return payloads[-1]
+
+    old_stream = asyncio.run(start_old_stream())
+    runtime_config.apply_cli(
+        chat_model_id="claude_code:default",
+        assessment_model_id=None,
+    )
+
+    old_json_answered = service.answer(old_json.session_id, "旧回答")
+
+    async def answer_old_stream() -> dict[str, Any]:
+        events = service.answer_events(old_stream["session_id"], "旧回答")
+        payloads = [payload async for event, payload in events if event == "state"]
+        return payloads[-1]
+
+    old_stream_answered = asyncio.run(answer_old_stream())
+    new_session = service.create_session("新会话", learning_mode="teach_first")
+
+    assert service.session_runtime_version(old_json.session_id) == 1
+    assert service.session_runtime_version(old_stream["session_id"]) == 1
+    assert service.session_runtime_version(new_session.session_id) == 2
+    assert old_json_answered.explanation.startswith("旧模型 ")
+    assert old_stream_answered["explanation"].startswith("旧模型 ")
+    assert new_session.explanation.startswith("新模型 ")
 
 
 def test_web_session_grounds_teaching_in_optional_study_material() -> None:

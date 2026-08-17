@@ -8,6 +8,7 @@
 
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
+| [2026-08-17](2026-08-17.md) | `feat(models): 增加内存模型配置与认证 API` | #feat #test |
 | [2026-08-17](2026-08-17.md) | `feat(workflow): 接入先教后测学习流程` | #feat #test #docs |
 | [2026-08-17](2026-08-17.md) | `fix(cli): restore Codex exec compatibility (BUG-0002)` | #fix #test #docs |
 | [2026-08-16](2026-08-16.md) | `fix(core): harden audited runtime contracts (BUG-0001)` | #fix #test #docs |
