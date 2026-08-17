@@ -1,4 +1,5 @@
-from typing import Annotated, Any, TypedDict
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, TypedDict
 
 from learning_coach.context import merge_recent_errors
 
@@ -7,6 +8,32 @@ MAX_TEACHING_REVIEWS = 9
 MAX_AGENT_HANDOFFS = 20
 MAX_RESEARCH_FINDINGS = 6
 MAX_SAFETY_FINDINGS = 10
+
+LearningMode = Literal["teach_first", "diagnose_first"]
+DEFAULT_LEARNING_MODE: LearningMode = "teach_first"
+LEGACY_LEARNING_MODE: LearningMode = "diagnose_first"
+_LEARNING_MODES = frozenset({DEFAULT_LEARNING_MODE, LEGACY_LEARNING_MODE})
+
+
+def learning_mode_for_new_session(value: str | None) -> LearningMode:
+    """Normalize an explicit mode while keeping the new teach-first default."""
+
+    normalized = (value or DEFAULT_LEARNING_MODE).strip().lower()
+    if not normalized:
+        normalized = DEFAULT_LEARNING_MODE
+    if normalized not in _LEARNING_MODES:
+        choices = ", ".join(sorted(_LEARNING_MODES))
+        raise ValueError(f"learning_mode 必须是以下值之一：{choices}。")
+    return normalized  # type: ignore[return-value]
+
+
+def learning_mode_for_state(state: Mapping[str, Any]) -> LearningMode:
+    """Resolve persisted state, preserving legacy diagnose-first checkpoints."""
+
+    value = state.get("learning_mode")
+    if value is None:
+        return LEGACY_LEARNING_MODE
+    return learning_mode_for_new_session(str(value))
 
 
 def append_learning_events(
@@ -58,6 +85,9 @@ class LearningState(TypedDict, total=False):
     """The explicit state shared by every node in the learning workflow."""
 
     topic: str
+    learning_mode: LearningMode
+    initial_lesson: str
+    understanding_check: dict[str, Any]
     learning_goal: str
     learner_id: str
     long_term_memory: dict[str, Any]

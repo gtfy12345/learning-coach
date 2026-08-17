@@ -63,6 +63,11 @@ from learning_coach.security import (
     inspect_content_safety,
     safety_findings_updates,
 )
+from learning_coach.state import (
+    LearningMode,
+    learning_mode_for_new_session,
+    learning_mode_for_state,
+)
 
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
@@ -141,8 +146,11 @@ class ForkRequest(BaseModel):
 class SessionView(BaseModel):
     session_id: str
     status: Literal["waiting", "completed"]
-    stage: Literal["diagnostic", "quiz", "approval", "summary"]
+    stage: Literal[
+        "diagnostic", "understanding_check", "quiz", "approval", "summary"
+    ]
     topic: str
+    learning_mode: LearningMode
     learning_goal: str
     learner_id: str = "local-learner"
     long_term_memory: LearnerMemoryView | None = None
@@ -308,6 +316,7 @@ class LearningSessionService:
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
         learner_id: str = "",
+        learning_mode: str | None = None,
     ) -> dict[str, Any]:
         normalized_topic = topic.strip()
         if not normalized_topic:
@@ -328,6 +337,7 @@ class LearningSessionService:
         )
         initial_state: dict[str, Any] = {
             "topic": normalized_topic,
+            "learning_mode": learning_mode_for_new_session(learning_mode),
             "learning_goal": runtime_context.learning_goal,
             "learner_id": normalized_learner or "local-learner",
             "mastery_level": 0,
@@ -376,11 +386,18 @@ class LearningSessionService:
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
         learner_id: str = "",
+        learning_mode: str | None = None,
     ) -> SessionView:
         graph = self._ensure_graph()
         session_id = uuid.uuid4().hex
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal, materials, learner_id
+            topic,
+            image_blocks,
+            study_material,
+            learning_goal,
+            materials,
+            learner_id,
+            learning_mode,
         )
         runtime_context = create_learning_runtime_context(
             initial_state["topic"],
@@ -411,9 +428,16 @@ class LearningSessionService:
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
         learner_id: str = "",
+        learning_mode: str | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         initial_state = self._initial_state(
-            topic, image_blocks, study_material, learning_goal, materials, learner_id
+            topic,
+            image_blocks,
+            study_material,
+            learning_goal,
+            materials,
+            learner_id,
+            learning_mode,
         )
         return self._events_for_initial_state(initial_state)
 
@@ -425,6 +449,7 @@ class LearningSessionService:
         learning_goal: str = "",
         materials: Sequence[MaterialInput] = (),
         learner_id: str = "",
+        learning_mode: str | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         """Prepare blocking material ingestion off-loop, then stream the graph."""
 
@@ -436,6 +461,7 @@ class LearningSessionService:
             learning_goal,
             materials,
             learner_id,
+            learning_mode,
         )
         return self._events_for_initial_state(initial_state)
 
@@ -671,6 +697,8 @@ class LearningSessionService:
             stage = (
                 "diagnostic"
                 if kind == "diagnostic"
+                else "understanding_check"
+                if kind == "understanding_check"
                 else "approval"
                 if kind == "approval"
                 else "quiz"
@@ -680,6 +708,7 @@ class LearningSessionService:
                 status="waiting",
                 stage=stage,
                 topic=state["topic"],
+                learning_mode=learning_mode_for_state(state),
                 learning_goal=state.get(
                     "learning_goal", f"掌握主题：{state['topic']}"
                 ),
@@ -719,6 +748,7 @@ class LearningSessionService:
             status="completed",
             stage="summary",
             topic=state["topic"],
+            learning_mode=learning_mode_for_state(state),
             learning_goal=state.get(
                 "learning_goal", f"掌握主题：{state['topic']}"
             ),
@@ -854,6 +884,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     )
     async def start_session(
         topic: str = Form(...),
+        learning_mode: LearningMode = Form(default="teach_first"),
         learning_goal: str = Form(default=""),
         learner_id: str = Form(default=""),
         image: UploadFile | None = File(default=None),
@@ -881,6 +912,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 learning_goal,
                 material_inputs,
                 learner_id,
+                learning_mode,
             )
             return await _session_view_from_events(events)
         except Exception as exc:
@@ -893,6 +925,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     @application.post("/api/sessions/stream", status_code=201)
     async def start_session_stream(
         topic: str = Form(...),
+        learning_mode: LearningMode = Form(default="teach_first"),
         learning_goal: str = Form(default=""),
         learner_id: str = Form(default=""),
         image: UploadFile | None = File(default=None),
@@ -920,6 +953,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
                 learning_goal,
                 material_inputs,
                 learner_id,
+                learning_mode,
             )
         except Exception as exc:
             _raise_http_error(exc)

@@ -10,7 +10,7 @@ from learning_coach.agents import build_teaching_swarm, resolve_teaching_retriev
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.evaluation import build_stage_report_node
 from learning_coach.memory import recall_memory_node, remember_session_node
-from learning_coach.nodes import LearningCoachNodes
+from learning_coach.nodes import LearningCoachNodes, route_initial_learning
 from learning_coach.resilience import (
     default_model_retry_policy,
     diagnostic_cache_key,
@@ -73,6 +73,23 @@ def build_learning_graph(
         retry_policy=retry,
         cache_policy=diagnostic_cache_policy,
     )
+    builder.add_node("teach_initial", nodes.teach_initial, retry_policy=retry)
+    builder.add_node(
+        "make_understanding_check",
+        nodes.make_understanding_check,
+        retry_policy=retry,
+    )
+    builder.add_node(
+        "collect_understanding",
+        nodes.collect_understanding,
+        destinations=("assess_understanding",),
+    )
+    builder.add_node(
+        "assess_understanding",
+        nodes.assess_understanding,
+        retry_policy=retry,
+        destinations=("teach", "prepare_practice"),
+    )
     builder.add_node(
         "collect_diagnostic",
         nodes.collect_diagnostic,
@@ -98,7 +115,16 @@ def build_learning_graph(
     builder.add_node("build_stage_report", build_stage_report_node)
 
     builder.add_edge(START, "recall_memory")
-    builder.add_edge("recall_memory", "make_diagnostic")
+    builder.add_conditional_edges(
+        "recall_memory",
+        route_initial_learning,
+        {
+            "teach_first": "teach_initial",
+            "diagnose_first": "make_diagnostic",
+        },
+    )
+    builder.add_edge("teach_initial", "make_understanding_check")
+    builder.add_edge("make_understanding_check", "collect_understanding")
     builder.add_edge("make_diagnostic", "collect_diagnostic")
     builder.add_edge("teach", "make_quiz")
     builder.add_edge("prepare_practice", "make_quiz")

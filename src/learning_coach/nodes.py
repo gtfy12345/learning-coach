@@ -37,6 +37,7 @@ from learning_coach.schemas import (
     ToolTraceEntry,
 )
 from learning_coach.state import LearningState
+from learning_coach.state import learning_mode_for_state
 
 _APPROVAL_ACCEPTED_VALUES = frozenset(
     {"approve", "approved", "yes", "y", "true", "1", "ok", "批准"}
@@ -74,6 +75,14 @@ def route_after_assessment(state: LearningState) -> Literal["retry", "finish"]:
     if state["score"] >= 80 or state.get("attempts", 0) >= 2:
         return "finish"
     return "retry"
+
+
+def route_initial_learning(
+    state: LearningState,
+) -> Literal["teach_first", "diagnose_first"]:
+    """Route new explicit sessions while preserving legacy checkpoints."""
+
+    return learning_mode_for_state(state)
 
 
 class LearningCoachNodes:
@@ -118,6 +127,182 @@ class LearningCoachNodes:
             "diagnostic_focus": diagnostic.focus,
             "diagnostic_difficulty": diagnostic.difficulty,
         }
+
+    def teach_initial(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        """Teach one bounded foundation lesson before checking understanding."""
+
+        learning_runtime = self._runtime_context(state, runtime)
+        self._write_status("teaching", "started")
+        task_input: dict[str, Any] = {
+            "topic": state["topic"],
+            "diagnostic_focus": "先建立核心概念",
+            "diagnostic_difficulty": "foundation",
+            "diagnostic_answer": "尚未进行理解检查",
+            "feedback": "暂无",
+            "missing_point": "暂无",
+            "study_material": state.get("study_material", ""),
+            "study_chunks": state.get("study_chunks", []),
+            "learning_goal": learning_runtime.learning_goal,
+            "mastery_level": state.get("mastery_level", 0),
+            "recent_errors": list(state.get("recent_errors", [])),
+            "context_summary": state.get("context_summary", ""),
+        }
+        text_parts: list[str] = []
+        sources: list[Any] = []
+        context_report: Any = None
+        retrieval_report: Any = None
+        graph_report: Any = None
+        for teaching in self.runnables.teach_stream(task_input, learning_runtime):
+            if teaching.sources and not sources:
+                sources = list(teaching.sources)
+                self._write_event(
+                    {
+                        "event": "sources",
+                        "task": "teaching",
+                        "sources": [source.model_dump() for source in sources],
+                    }
+                )
+            if teaching.context_report is not None and context_report is None:
+                context_report = teaching.context_report
+            if teaching.retrieval_report is not None and retrieval_report is None:
+                retrieval_report = teaching.retrieval_report
+                self._write_event(
+                    {
+                        "event": "retrieval",
+                        "task": "teaching",
+                        "report": retrieval_report.model_dump(),
+                    }
+                )
+            if teaching.graph_report is not None and graph_report is None:
+                graph_report = teaching.graph_report
+                self._write_event(
+                    {
+                        "event": "knowledge_graph",
+                        "task": "teaching",
+                        "report": graph_report.model_dump(),
+                    }
+                )
+            if teaching.text:
+                text_parts.append(teaching.text)
+                self._write_token("teaching", teaching.text)
+        lesson = "".join(text_parts)
+        result: dict[str, Any] = {
+            "initial_lesson": lesson,
+            "explanation": lesson,
+            "explanation_sources": [source.model_dump() for source in sources],
+            "context_summary": state.get("context_summary")
+            or build_context_summary(state, learning_runtime),
+            "learning_events": [
+                LearningEvent(
+                    node="teach_initial",
+                    status="completed",
+                    detail=f"基础教学完成 · {len(lesson)} 字符",
+                ).model_dump(mode="json")
+            ],
+        }
+        if context_report is not None:
+            result["context_report"] = context_report.model_dump()
+        if retrieval_report is not None:
+            result["retrieval_report"] = retrieval_report.model_dump()
+        if graph_report is not None:
+            result["graph_report"] = graph_report.model_dump()
+        self._write_status("teaching", "completed")
+        return result
+
+    def make_understanding_check(self, state: LearningState) -> dict[str, Any]:
+        """Generate one structured check after the initial lesson."""
+
+        self._write_status("diagnostic", "started")
+        diagnostic = self.runnables.diagnostic.invoke(
+            {
+                "topic": state["topic"],
+                "diagnostic_images": state.get("diagnostic_images", []),
+            }
+        )
+        self._write_status("diagnostic", "completed")
+        return {
+            "diagnostic_question": diagnostic.question,
+            "diagnostic_focus": diagnostic.focus,
+            "diagnostic_difficulty": diagnostic.difficulty,
+        }
+
+    def collect_understanding(self, state: LearningState) -> Command:
+        answer = interrupt(
+            {
+                "kind": "understanding_check",
+                "question": state["diagnostic_question"],
+            }
+        )
+        safety = inspect_content_safety(
+            str(answer), source="understanding_answer"
+        )
+        return Command(
+            goto="assess_understanding",
+            update={
+                "diagnostic_answer": str(answer),
+                "attempts": 0,
+                "safety_findings": safety_findings_updates(safety),
+            },
+        )
+
+    def assess_understanding(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> Command:
+        """Evaluate the low-stakes check without consuming a quiz attempt."""
+
+        learning_runtime = self._runtime_context(state, runtime)
+        assessment = self.runnables.assessment.invoke(
+            {
+                "topic": state["topic"],
+                "quiz_question": state["diagnostic_question"],
+                "quiz_answer": state["diagnostic_answer"],
+            }
+        )
+        passed = assessment.score >= learning_runtime.target_mastery
+        error_delta = [] if passed else [assessment.missing_point]
+        progress = dict(state)
+        progress.update(
+            mastery_level=assessment.score,
+            feedback=assessment.feedback,
+            missing_point=assessment.missing_point,
+            recent_errors=merge_recent_errors(
+                list(state.get("recent_errors", [])), error_delta
+            ),
+        )
+        update: dict[str, Any] = {
+            "understanding_check": {
+                "score": assessment.score,
+                "passed": passed,
+                "feedback": assessment.feedback,
+                "missing_point": assessment.missing_point,
+            },
+            "mastery_level": assessment.score,
+            "feedback": assessment.feedback,
+            "missing_point": assessment.missing_point,
+            "recent_errors": error_delta,
+            "context_summary": build_context_summary(progress, learning_runtime),
+            "attempts": 0,
+            "learning_events": [
+                LearningEvent(
+                    node="assess_understanding",
+                    status="completed",
+                    detail=(
+                        f"理解检查 {assessment.score} 分 · "
+                        f"{'通过' if passed else '需要补讲'}"
+                    ),
+                ).model_dump(mode="json")
+            ],
+        }
+        goto: Any = (
+            "prepare_practice" if passed else ["teach", "prepare_practice"]
+        )
+        return Command(goto=goto, update=update)
 
     def collect_diagnostic(self, state: LearningState) -> Command:
         answer = interrupt(

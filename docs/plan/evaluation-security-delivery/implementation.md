@@ -64,3 +64,4 @@
 ## 后续修复 / Follow-ups
 
 - 2026-08-16: [收官审计契约加固 Follow-up](../evaluation-security-delivery-follow-up-contract-hardening/implementation.md) - 修复全项目收官审计发现的兼容、安全、运行与测试契约漂移。
+- 2026-08-17: [先教后测与本地模型设置 Follow-up](../evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md) - 默认先教学再理解检查，并增加内存 API 配置与 Codex/Claude 官方登录页面。

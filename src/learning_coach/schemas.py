@@ -146,8 +146,10 @@ class LearningEvent(BaseModel):
 
     node: Literal[
         "teach",
+        "teach_initial",
         "prepare_practice",
         "assess",
+        "assess_understanding",
         "recall_memory",
         "remember_session",
         "approve_execution",

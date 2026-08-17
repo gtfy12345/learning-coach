@@ -1,0 +1,64 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: evaluation-security-delivery-follow-up-teach-first-model-settings
+  baseBranch: main
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 先教后测与模型设置
+      - teach first learning mode
+      - Web 模型 API 配置与 CLI 登录
+    keywords:
+      - 先教学再检查
+      - 可选先诊断
+      - learning_mode
+      - 模型设置页面
+      - API Key 内存配置
+      - Codex 登录
+      - Claude 登录
+      - 运行时模型切换
+    relatedSpecs:
+      - ../../spec/evaluation-security-delivery-design.md
+      - ../../spec/official-cli-login-follow-up-codex-exec-compatibility-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/evaluation-security-delivery-follow-up-teach-first-model-settings-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../evaluation-security-delivery/implementation.md
+        - ../../spec/evaluation-security-delivery-design.md
+        - ../../spec/official-cli-login-follow-up-codex-exec-compatibility-design.md
+        - ../../reports/2026-08-15-evaluation-security-delivery-assessment.md
+      discovery:
+        packages:
+          - src/learning_coach/state.py
+          - src/learning_coach/nodes.py
+          - src/learning_coach/graph.py
+          - src/learning_coach/model.py
+          - src/learning_coach/auth.py
+          - src/learning_coach/web.py
+          - src/learning_coach/static
+          - tests/test_graph.py
+          - tests/test_web.py
+        uiRoutes:
+          - /
+          - /settings
+          - /api/sessions
+          - /api/sessions/stream
+          - /api/model-config
+          - /api/model-auth/{provider}/{action}
+        apiNames:
+          - LearningMode
+          - RuntimeModelConfigService
+          - build_learning_graph
+          - LearningSessionService
+          - run_auth_action
+        commands:
+          - python -m learning_coach
+          - python -m learning_coach web
+          - python -m learning_coach auth

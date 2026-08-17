@@ -137,6 +137,53 @@ def test_graph_pauses_for_two_answers_then_finishes() -> None:
     assert "下一步" in result["summary"]
 
 
+def test_teach_first_starts_with_lesson_then_skips_remediation_when_check_passes() -> None:
+    graph = build_learning_graph(FakeChatModel())
+    config = {"configurable": {"thread_id": "teach-first-pass"}}
+
+    started = graph.invoke(
+        {
+            "topic": "LangGraph Reducer",
+            "learning_mode": "teach_first",
+            "attempts": 0,
+        },
+        config=config,
+    )
+
+    assert started["initial_lesson"].startswith("默认更新会覆盖旧值")
+    assert started["__interrupt__"][0].value["kind"] == "understanding_check"
+
+    checked = graph.invoke(Command(resume="Reducer 会合并并行更新。"), config)
+
+    assert checked["__interrupt__"][0].value["kind"] == "quiz"
+    assert checked["understanding_check"]["score"] == 86
+    assert checked["attempts"] == 0
+    assert "teaching_plan" not in checked
+
+
+def test_teach_first_routes_failed_check_through_targeted_teaching() -> None:
+    model = ScriptedFakeChatModel([55, 86])
+    graph = build_learning_graph(model)
+    config = {"configurable": {"thread_id": "teach-first-remediation"}}
+
+    started = graph.invoke(
+        {
+            "topic": "LangGraph Reducer",
+            "learning_mode": "teach_first",
+            "attempts": 0,
+        },
+        config=config,
+    )
+    checked = graph.invoke(Command(resume="并行更新会自动保存。"), config)
+
+    assert started["__interrupt__"][0].value["kind"] == "understanding_check"
+    assert checked["__interrupt__"][0].value["kind"] == "quiz"
+    assert checked["understanding_check"]["score"] == 55
+    assert checked["recent_errors"] == ["缺口-1"]
+    assert checked["attempts"] == 0
+    assert checked["teaching_plan"]
+
+
 def test_graph_runtime_context_survives_interrupts_and_updates_progress() -> None:
     graph = build_learning_graph(FakeChatModel())
     config = {"configurable": {"thread_id": "context-learning-session"}}

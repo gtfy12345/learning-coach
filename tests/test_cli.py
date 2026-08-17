@@ -49,6 +49,7 @@ def test_run_passes_images_into_initial_graph_state(monkeypatch) -> None:
     assert result["summary"] == "done"
     assert graph.initial_state == {
         "topic": "状态图",
+        "learning_mode": "teach_first",
         "attempts": 0,
         "learning_goal": "掌握主题：状态图",
         "learner_id": "local-learner",
@@ -56,6 +57,22 @@ def test_run_passes_images_into_initial_graph_state(monkeypatch) -> None:
         "recent_errors": [],
         "diagnostic_images": [block],
     }
+
+
+def test_run_accepts_explicit_diagnose_first_mode(monkeypatch) -> None:
+    graph = FinishedGraph()
+    monkeypatch.setattr(
+        cli, "create_model_suite", lambda: SimpleNamespace(accepts_images=True)
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_learning_graph",
+        lambda models, *, checkpointer=None, store=None: graph,
+    )
+
+    cli.run("状态图", learning_mode="diagnose_first")
+
+    assert graph.initial_state["learning_mode"] == "diagnose_first"
 
 
 def test_run_passes_learning_goal_as_state_and_runtime_context(monkeypatch) -> None:
@@ -122,6 +139,19 @@ def test_main_accepts_optional_learning_goal(monkeypatch) -> None:
     cli.main(["LCEL", "--goal", "能独立组合 Runnable"])
 
     assert calls == [("LCEL", "能独立组合 Runnable")]
+
+
+def test_main_accepts_explicit_learning_mode(monkeypatch) -> None:
+    calls: list[str | None] = []
+    monkeypatch.setattr(
+        cli,
+        "run",
+        lambda topic, **kwargs: calls.append(kwargs.get("learning_mode")),
+    )
+
+    cli.main(["LCEL", "--learning-mode", "diagnose_first"])
+
+    assert calls == ["diagnose_first"]
 
 
 def test_material_sources_support_local_files_and_urls_without_leaking_path(

@@ -9,6 +9,8 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
+| [先教后测与本地模型设置 Follow-up](./evaluation-security-delivery-follow-up-teach-first-model-settings/) | [implementation](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation-checklist.md) | 1.0 | 2026-08-17 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 
 ## 2 已完成（Completed）
 

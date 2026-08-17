@@ -114,7 +114,13 @@ def test_home_page_exposes_the_learning_product() -> None:
 def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     client, _ = make_client()
 
-    started = client.post("/api/sessions", data={"topic": "LangGraph 条件边"})
+    started = client.post(
+        "/api/sessions",
+        data={
+            "topic": "LangGraph 条件边",
+            "learning_mode": "diagnose_first",
+        },
+    )
     assert started.status_code == 201
     first = started.json()
     assert first["status"] == "waiting"
@@ -212,6 +218,48 @@ def test_web_code_practice_runs_tests_without_exposing_hidden_cases() -> None:
     assert "/Users/" not in json.dumps(completed)
 
 
+def test_web_defaults_to_teaching_before_the_understanding_check() -> None:
+    client, _ = make_client()
+
+    started = client.post(
+        "/api/sessions", data={"topic": "LangGraph 条件边"}
+    )
+
+    assert started.status_code == 201
+    payload = started.json()
+    assert payload["learning_mode"] == "teach_first"
+    assert payload["stage"] == "understanding_check"
+    assert payload["explanation"] == "条件边根据状态选择下一节点。"
+    assert payload["attempts"] == 0
+
+
+def test_web_can_explicitly_keep_the_diagnose_first_flow() -> None:
+    client, _ = make_client()
+
+    started = client.post(
+        "/api/sessions",
+        data={"topic": "LangGraph 条件边", "learning_mode": "diagnose_first"},
+    )
+
+    assert started.status_code == 201
+    payload = started.json()
+    assert payload["learning_mode"] == "diagnose_first"
+    assert payload["stage"] == "diagnostic"
+    assert payload["explanation"] is None
+
+
+def test_web_rejects_unknown_learning_mode() -> None:
+    client, _ = make_client()
+
+    response = client.post(
+        "/api/sessions",
+        data={"topic": "LangGraph 条件边", "learning_mode": "chat"},
+    )
+
+    assert response.status_code == 422
+    assert "learning_mode" in response.text
+
+
 def test_stream_emits_safe_code_practice_events() -> None:
     client, _ = make_client()
     started = client.post(
@@ -244,6 +292,7 @@ def test_web_accepts_learning_goal_and_exposes_context_progress() -> None:
         data={
             "topic": "LangGraph 条件边",
             "learning_goal": "能独立实现有界补救流程",
+            "learning_mode": "diagnose_first",
         },
     ).json()
     taught = client.post(
@@ -263,6 +312,23 @@ def test_web_accepts_learning_goal_and_exposes_context_progress() -> None:
     assert assessed["recent_errors"] == ["条件函数应读取结构化状态。"]
     assert "60/100" in assessed["context_summary"]
     assert assessed["context_report"]["model_calls"] == 1
+
+
+def test_web_initial_state_records_explicit_learning_mode_with_teach_first_default() -> None:
+    model = FakeChatModel()
+    service = LearningSessionService(
+        models=LearningCoachModels.from_models(model),
+        chat_model_id="fake:coach",
+        assessment_model_id="fake:assessment",
+    )
+
+    default_state = service._initial_state("LangGraph", (), "")
+    diagnostic_state = service._initial_state(
+        "LangGraph", (), "", learning_mode="diagnose_first"
+    )
+
+    assert default_state["learning_mode"] == "teach_first"
+    assert diagnostic_state["learning_mode"] == "diagnose_first"
 
 
 def test_web_session_grounds_teaching_in_optional_study_material() -> None:
@@ -421,7 +487,10 @@ def test_web_rejects_too_many_materials_before_starting_session() -> None:
 
 def test_web_session_exposes_bounded_remedial_round() -> None:
     client, _ = make_client(scores=(60, 88))
-    started = client.post("/api/sessions", data={"topic": "条件路由"}).json()
+    started = client.post(
+        "/api/sessions",
+        data={"topic": "条件路由", "learning_mode": "diagnose_first"},
+    ).json()
 
     client.post(
         f"/api/sessions/{started['session_id']}/answers",
@@ -608,6 +677,7 @@ def test_stream_endpoints_emit_ordered_sse_events_and_final_state() -> None:
         data={
             "topic": "LangGraph 条件边",
             "study_material": "State 是 LangGraph 条件边 的前置知识。",
+            "learning_mode": "diagnose_first",
         },
     )
 
@@ -769,7 +839,11 @@ def test_json_answer_failure_uses_the_same_safe_error_contract() -> None:
     )
     client = TestClient(create_app(service=service))
     started = client.post(
-        "/api/sessions", data={"topic": "回答错误边界"}
+        "/api/sessions",
+        data={
+            "topic": "回答错误边界",
+            "learning_mode": "diagnose_first",
+        },
     ).json()
 
     response = client.post(
@@ -799,9 +873,13 @@ def test_concurrent_json_answers_are_serialized_per_session() -> None:
             transport=transport, base_url="http://testserver"
         ) as client:
             started = (
-                await client.post(
-                    "/api/sessions", data={"topic": "并发回答单飞"}
-                )
+                    await client.post(
+                        "/api/sessions",
+                        data={
+                            "topic": "并发回答单飞",
+                            "learning_mode": "diagnose_first",
+                        },
+                    )
             ).json()
             endpoint = f"/api/sessions/{started['session_id']}/answers"
             return list(
@@ -1038,7 +1116,11 @@ def test_web_long_term_memory_persists_across_sessions() -> None:
 
     first = client.post(
         "/api/sessions",
-        data={"topic": "LangGraph 记忆", "learner_id": "ray"},
+        data={
+            "topic": "LangGraph 记忆",
+            "learner_id": "ray",
+            "learning_mode": "diagnose_first",
+        },
     ).json()
     assert first["learner_id"] == "ray"
     assert first["long_term_memory"] is None
@@ -1053,7 +1135,11 @@ def test_web_long_term_memory_persists_across_sessions() -> None:
 
     second = client.post(
         "/api/sessions",
-        data={"topic": "LangGraph 记忆进阶", "learner_id": "ray"},
+        data={
+            "topic": "LangGraph 记忆进阶",
+            "learner_id": "ray",
+            "learning_mode": "diagnose_first",
+        },
     ).json()
     assert second["long_term_memory"]["sessions"] == 1
     assert second["long_term_memory"]["last_topic"] == "LangGraph 记忆"

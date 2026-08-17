@@ -21,6 +21,7 @@ from learning_coach.loaders import default_loader_registry
 from learning_coach.media import image_content_block
 from learning_coach.memory import create_checkpointer, create_memory_store
 from learning_coach.model import create_model_suite
+from learning_coach.state import learning_mode_for_new_session
 
 
 def _read_topic(argument: str | None) -> str:
@@ -56,6 +57,7 @@ def run(
     image_sources: Sequence[str] = (),
     material_sources: Sequence[str] = (),
     learning_goal: str | None = None,
+    learning_mode: str | None = None,
 ) -> dict[str, Any]:
     """Run one learning session until the graph finishes.
 
@@ -99,6 +101,7 @@ def run(
     resuming = bool(existing.values or existing.tasks)
     initial_state: dict[str, Any] = {
         "topic": topic,
+        "learning_mode": learning_mode_for_new_session(learning_mode),
         "learning_goal": runtime_context.learning_goal,
         "learner_id": learner_id,
         "mastery_level": 0,
@@ -235,6 +238,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="本次学习目标；未填写时默认为掌握当前主题",
     )
     parser.add_argument(
+        "--learning-mode",
+        choices=("teach_first", "diagnose_first"),
+        default="teach_first",
+        help="学习流程；默认先讲解再检查理解",
+    )
+    parser.add_argument(
         "--thread-id",
         help="会话线程 ID；配置 CHECKPOINT_DB_PATH 后可用同一 ID 跨进程恢复",
     )
@@ -253,6 +262,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             image_sources=args.image,
             material_sources=args.material,
             learning_goal=args.goal,
+            learning_mode=args.learning_mode,
         )
     except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
