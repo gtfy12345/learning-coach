@@ -148,9 +148,21 @@ def test_settings_page_exposes_api_test_gate_and_cli_auth_controls() -> None:
     assert response.status_code == 200
     assert 'id="api-chat-provider"' in response.text
     assert 'id="api-assessment-provider"' in response.text
-    assert 'id="openai-api-key"' in response.text
-    assert 'id="anthropic-api-key"' in response.text
-    assert 'id="google-genai-api-key"' in response.text
+    for provider in (
+        "openai",
+        "anthropic",
+        "google_genai",
+        "deepseek",
+        "dashscope",
+        "zhipu",
+        "openai_compatible",
+    ):
+        assert f'value="{provider}"' in response.text
+        assert f"{provider}:" in script.text
+    assert 'id="provider-credentials"' in response.text
+    assert 'id="openai-api-key"' not in response.text
+    assert 'id="anthropic-api-key"' not in response.text
+    assert 'id="google-genai-api-key"' not in response.text
     assert 'id="test-api-config"' in response.text
     assert 'id="apply-api-config"' in response.text
     assert "disabled" in response.text
@@ -163,9 +175,53 @@ def test_settings_page_exposes_api_test_gate_and_cli_auth_controls() -> None:
     assert "/api/model-config/test" in script.text
     assert "/api/model-config" in script.text
     assert "/api/model-auth/" in script.text
+    assert "renderProviderCredentials" in script.text
+    assert "base_urls: baseUrls" in script.text
+    assert "https://api.deepseek.com" in script.text
+    assert "https://dashscope.aliyuncs.com/compatible-mode/v1" in script.text
+    assert "https://open.bigmodel.cn/api/paas/v4" in script.text
     assert "localStorage" not in script.text
     assert "sessionStorage" not in script.text
     assert "document.cookie" not in script.text
+
+
+def test_settings_page_exposes_clear_runtime_and_configuration_feedback() -> None:
+    client, _ = make_client()
+
+    page = client.get("/settings").text
+    script = client.get("/static/settings.js").text
+
+    assert 'id="current-runtime-model"' in page
+    assert 'id="current-runtime-detail"' in page
+    assert 'class="provider-showcase"' in page
+    assert "DeepSeek" in page
+    assert "通义千问" in page
+    assert "智谱 GLM" in page
+    assert "无需 .env" in page
+    assert 'aria-busy="false"' in page
+    assert "currentRuntimeModel" in script
+    assert "currentRuntimeDetail" in script
+    assert 'setAttribute("aria-busy"' in script
+
+
+def test_model_navigation_and_settings_layout_are_accessible_and_responsive() -> None:
+    client, _ = make_client()
+
+    home = client.get("/").text
+    settings = client.get("/settings").text
+    script = client.get("/static/settings.js").text
+    styles = client.get("/static/styles.css").text
+
+    assert 'class="settings-nav-link"' in home
+    assert 'href="/settings"' in home
+    assert "模型与连接" in home
+    assert 'aria-label="打开模型与连接设置"' in home
+    assert 'for="api-chat-provider"' in settings
+    assert 'for="api-assessment-provider"' in settings
+    assert "wrapper.htmlFor = id" in script
+    assert ":focus-visible" in styles
+    assert "@media (max-width: 640px)" in styles
+    assert "overflow-wrap: anywhere" in styles
 
 
 def test_web_session_runs_diagnosis_quiz_and_summary() -> None:

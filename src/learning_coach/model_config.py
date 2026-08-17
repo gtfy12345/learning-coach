@@ -7,21 +7,34 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from learning_coach.model import (
     LearningCoachModels,
     ModelSettings,
+    OPENAI_COMPATIBLE_PROVIDER_DEFAULTS,
     create_model_suite_from_settings,
 )
 from learning_coach.schemas import Assessment, Diagnostic
 
-ApiProvider = Literal["openai", "anthropic", "google_genai"]
+ApiProvider = Literal[
+    "openai",
+    "anthropic",
+    "google_genai",
+    "deepseek",
+    "dashscope",
+    "zhipu",
+    "openai_compatible",
+]
 CliProvider = Literal["codex_cli", "claude_code"]
 AuthMode = Literal["api", "cli"]
 
-API_PROVIDERS = frozenset({"openai", "anthropic", "google_genai"})
+API_PROVIDERS = frozenset(
+    {"openai", "anthropic", "google_genai"}
+    | OPENAI_COMPATIBLE_PROVIDER_DEFAULTS.keys()
+)
 CLI_PROVIDERS = frozenset({"codex_cli", "claude_code"})
 DEFAULT_TEST_TTL = timedelta(minutes=5)
 DEFAULT_MAX_CANDIDATES = 8
@@ -39,10 +52,45 @@ def model_provider(model_id: str) -> str:
     return _model_id(model_id).partition(":")[0]
 
 
+def _compatible_base_url(value: str, *, provider: str) -> str:
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme.lower() != "https":
+        raise ValueError(f"{provider} Base URL 必须使用 HTTPS。")
+    if not parsed.hostname:
+        raise ValueError(f"{provider} Base URL 必须包含主机。")
+    if parsed.username or parsed.password:
+        raise ValueError(f"{provider} Base URL 不得包含用户凭据。")
+    if parsed.query:
+        raise ValueError(f"{provider} Base URL 不得包含查询参数。")
+    if parsed.fragment:
+        raise ValueError(f"{provider} Base URL 不得包含片段。")
+    return normalized
+
+
+def resolve_api_base_urls(
+    providers: set[str], submitted: Mapping[str, str]
+) -> dict[str, str]:
+    """Resolve and validate endpoints only for selected compatible providers."""
+
+    resolved: dict[str, str] = {}
+    for provider in sorted(providers):
+        if provider not in OPENAI_COMPATIBLE_PROVIDER_DEFAULTS:
+            continue
+        value = submitted.get(provider, "").strip()
+        if not value:
+            value = OPENAI_COMPATIBLE_PROVIDER_DEFAULTS[provider] or ""
+        if not value:
+            raise ValueError(f"自定义兼容接口 {provider} 缺少 Base URL。")
+        resolved[provider] = _compatible_base_url(value, provider=provider)
+    return resolved
+
+
 class ApiModelConfigInput(BaseModel):
     chat_model_id: str = Field(min_length=3, max_length=200)
     assessment_model_id: str | None = Field(default=None, max_length=200)
     api_keys: dict[str, SecretStr]
+    base_urls: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("chat_model_id")
     @classmethod
@@ -195,6 +243,7 @@ class RuntimeModelConfigService:
         settings = ModelSettings(
             chat_model_id=chat_model_id,
             assessment_model_id=assessment_model_id,
+            api_base_urls=resolve_api_base_urls(providers, request.base_urls),
         )
         try:
             models = self._models_builder(settings, api_keys)

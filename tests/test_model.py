@@ -6,6 +6,7 @@ from learning_coach.model import (
     LearningCoachModels,
     ModelCapabilities,
     ModelSettings,
+    _create_chat_model,
     create_chat_model,
     create_model_suite,
     image_inputs_enabled,
@@ -119,6 +120,60 @@ def test_openai_compatible_endpoint_uses_configured_base_url(monkeypatch) -> Non
     model = create_chat_model()
 
     assert str(model.root_client.base_url) == "https://example.com/v1/"
+
+
+def test_domestic_provider_uses_openai_driver_with_logical_credentials(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    sentinel = object()
+
+    def fake_init(model: str, **kwargs: Any) -> object:
+        calls.append((model, kwargs))
+        return sentinel
+
+    monkeypatch.setattr("learning_coach.model.init_chat_model", fake_init)
+
+    model = _create_chat_model(
+        "deepseek:deepseek-v4-flash",
+        api_keys={"deepseek": "deepseek-secret"},
+        api_base_urls={"deepseek": "https://api.deepseek.com"},
+    )
+
+    assert model is sentinel
+    assert calls == [
+        (
+            "deepseek-v4-flash",
+            {
+                "model_provider": "openai",
+                "temperature": 0,
+                "api_key": "deepseek-secret",
+                "base_url": "https://api.deepseek.com",
+            },
+        )
+    ]
+
+
+def test_existing_provider_keeps_native_model_initialization(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    monkeypatch.setattr(
+        "learning_coach.model.init_chat_model",
+        lambda model, **kwargs: calls.append((model, kwargs)) or object(),
+    )
+
+    _create_chat_model(
+        "anthropic:claude-sonnet-4-6",
+        api_keys={"anthropic": "anthropic-secret"},
+        api_base_urls={"anthropic": "https://ignored.example.com"},
+    )
+
+    assert calls == [
+        (
+            "anthropic:claude-sonnet-4-6",
+            {"temperature": 0, "api_key": "anthropic-secret"},
+        )
+    ]
 
 
 def test_auto_prefers_native_structured_output() -> None:

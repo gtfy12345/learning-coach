@@ -8,6 +8,7 @@
 
 | 日期 | 报告 | 类型 |
 |------|------|------|
+| [2026-08-17](./2026-08-17-domestic-models-ui-assessment.md) | 国产模型兼容接入与模型页面优化交付复盘 | #assessment |
 | [2026-08-17](./2026-08-17-teach-first-model-settings-assessment.md) | 先教后测与本地模型设置交付复盘 | #assessment |
 | [2026-08-17](./2026-08-17-official-cli-login-follow-up-codex-exec-compatibility-assessment.md) | Codex CLI Exec 兼容性 Follow-up 交付复盘 | #assessment |
 | [2026-08-16](./2026-08-16-evaluation-security-delivery-follow-up-contract-hardening-assessment.md) | 收官审计契约加固 Follow-up 交付复盘 | #assessment |

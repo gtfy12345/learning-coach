@@ -1,0 +1,54 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui
+  baseBranch: codex/evaluation-security-delivery-follow-up-teach-first-model-settings-0817
+  branch: codex/domestic-models-ui-0817
+spec:
+  defaultTarget: backend
+  discovery:
+    aliases:
+      - 国产模型与设置页优化
+      - OpenAI compatible domestic providers
+      - DeepSeek Qwen GLM model settings
+    keywords:
+      - 国产模型
+      - DeepSeek
+      - 通义千问
+      - 智谱 GLM
+      - 自定义 Base URL
+      - 模型设置页优化
+      - 先测试后应用
+    relatedSpecs:
+      - ../../spec/evaluation-security-delivery-follow-up-teach-first-model-settings-design.md
+  targets:
+    backend:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui-design.md
+      testPlan: ./unit-test-plan.md
+      testChecklist: ./unit-test-plan-checklist.md
+      references:
+        - ../evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md
+        - ../../spec/evaluation-security-delivery-follow-up-teach-first-model-settings-design.md
+        - ../../reports/2026-08-17-teach-first-model-settings-assessment.md
+      discovery:
+        packages:
+          - src/learning_coach/model.py
+          - src/learning_coach/model_config.py
+          - src/learning_coach/static
+          - tests/test_model.py
+          - tests/test_model_config.py
+          - tests/test_model_config_api.py
+        uiRoutes:
+          - /
+          - /settings
+          - /api/model-config
+          - /api/model-config/test
+        apiNames:
+          - ApiModelConfigInput
+          - RuntimeModelConfigService
+          - create_model_suite_from_settings
+        commands:
+          - PYTHONPATH=src pytest
+          - python -m learning_coach web

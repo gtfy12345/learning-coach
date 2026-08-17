@@ -1,6 +1,6 @@
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
@@ -12,6 +12,13 @@ from learning_coach.schemas import Assessment, Diagnostic
 StructuredOutputStrategy = Literal["auto", "native", "tool"]
 StructuredOutputMethod = Literal["json_schema", "function_calling", "prompt_json"]
 ImageInputPolicy = Literal["auto", "allow", "deny"]
+
+OPENAI_COMPATIBLE_PROVIDER_DEFAULTS: dict[str, str | None] = {
+    "deepseek": "https://api.deepseek.com",
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "openai_compatible": None,
+}
 
 
 def _choice(value: str, *, name: str, allowed: tuple[str, ...]) -> str:
@@ -34,6 +41,7 @@ class ModelSettings:
     structured_output_strategy: StructuredOutputStrategy = "auto"
     image_input_policy: ImageInputPolicy = "auto"
     cli_timeout_seconds: int = 300
+    api_base_urls: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str]) -> "ModelSettings":
@@ -249,18 +257,29 @@ def _create_chat_model(
     *,
     cli_timeout_seconds: int = 300,
     api_keys: Mapping[str, str] | None = None,
+    api_base_urls: Mapping[str, str] | None = None,
 ) -> Any:
     if is_cli_model_id(model_id):
         return create_cli_chat_model(
             model_id, timeout_seconds=cli_timeout_seconds
         )
-    provider = model_id.partition(":")[0]
+    provider, _, model_name = model_id.partition(":")
     model_kwargs: dict[str, Any] = {"temperature": 0}
+    target_model_id = model_id
+    if provider in OPENAI_COMPATIBLE_PROVIDER_DEFAULTS:
+        target_model_id = model_name
+        model_kwargs["model_provider"] = "openai"
+        base_url = (api_base_urls or {}).get(provider)
+        if not base_url:
+            base_url = OPENAI_COMPATIBLE_PROVIDER_DEFAULTS[provider]
+        if not base_url:
+            raise RuntimeError(f"{provider} 缺少 Base URL。")
+        model_kwargs["base_url"] = base_url
     api_key = (api_keys or {}).get(provider)
     if api_key:
         key_name = "google_api_key" if provider == "google_genai" else "api_key"
         model_kwargs[key_name] = api_key
-    return init_chat_model(model_id, **model_kwargs)
+    return init_chat_model(target_model_id, **model_kwargs)
 
 
 def create_chat_model() -> Any:
@@ -299,6 +318,8 @@ def create_model_suite_from_settings(
             }
             if api_keys is not None:
                 kwargs["api_keys"] = api_keys
+            if settings.api_base_urls:
+                kwargs["api_base_urls"] = settings.api_base_urls
             models_by_id[model_id] = _create_chat_model(model_id, **kwargs)
         return models_by_id[model_id]
 

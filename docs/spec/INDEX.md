@@ -8,6 +8,7 @@
 
 | 文档 | 版本 | 状态 | 更新日期 |
 |------|------|------|----------|
+| [国产模型兼容接入与模型页面优化](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui-design.md) | 1.0 | completed | 2026-08-17 |
 | [先教后测与本地模型设置](./evaluation-security-delivery-follow-up-teach-first-model-settings-design.md) | 1.0 | completed | 2026-08-17 |
 | [Codex CLI Exec 兼容性修复](./official-cli-login-follow-up-codex-exec-compatibility-design.md) | 1.0 | completed | 2026-08-17 |
 | [收官审计契约加固](./evaluation-security-delivery-follow-up-contract-hardening-design.md) | 1.0 | completed | 2026-08-16 |

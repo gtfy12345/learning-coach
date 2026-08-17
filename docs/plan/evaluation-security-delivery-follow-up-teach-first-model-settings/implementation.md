@@ -97,3 +97,7 @@
 - [单元测试计划](./unit-test-plan.md)
 - [原实施计划](../evaluation-security-delivery/implementation.md)
 - [原交付评估](../../reports/2026-08-15-evaluation-security-delivery-assessment.md)
+
+## 后续修复 / Follow-ups
+
+- 2026-08-17: [国产模型兼容接入与模型页面优化](../evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/implementation.md) - 增加 OpenAI 兼容国产 Provider 并优化首页与设置页体验

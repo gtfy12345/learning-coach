@@ -11,10 +11,132 @@ const cliProvider = document.querySelector("#cli-provider");
 const cliError = document.querySelector("#cli-config-error");
 const cliStatus = document.querySelector("#cli-config-status");
 const currentRuntime = document.querySelector("#current-runtime");
-const keyInputs = {
-  openai: document.querySelector("#openai-api-key"),
-  anthropic: document.querySelector("#anthropic-api-key"),
-  google_genai: document.querySelector("#google-genai-api-key"),
+const currentRuntimeModel = document.querySelector("#current-runtime-model");
+const currentRuntimeDetail = document.querySelector("#current-runtime-detail");
+const providerCredentials = document.querySelector("#provider-credentials");
+
+const PROVIDER_PRESETS = Object.freeze({
+  openai: {
+    label: "OpenAI",
+    defaultModel: "gpt-5-mini",
+    baseUrl: null,
+  },
+  anthropic: {
+    label: "Anthropic",
+    defaultModel: "claude-sonnet-4-6",
+    baseUrl: null,
+  },
+  google_genai: {
+    label: "Google GenAI",
+    defaultModel: "gemini-2.5-flash-lite",
+    baseUrl: null,
+  },
+  deepseek: {
+    label: "DeepSeek",
+    defaultModel: "deepseek-v4-flash",
+    baseUrl: "https://api.deepseek.com",
+  },
+  dashscope: {
+    label: "通义千问 · 阿里云百炼",
+    defaultModel: "qwen-plus",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  },
+  zhipu: {
+    label: "智谱 GLM",
+    defaultModel: "glm-5-turbo",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  },
+  openai_compatible: {
+    label: "自定义 OpenAI 兼容接口",
+    defaultModel: "",
+    baseUrl: "",
+  },
+});
+
+const credentialDrafts = new Map();
+
+function selectedProviders() {
+  return [...new Set([apiChatProvider.value, apiAssessmentProvider.value])];
+}
+
+function captureProviderCredentials() {
+  providerCredentials.querySelectorAll(".provider-credential").forEach((card) => {
+    const provider = card.dataset.provider;
+    credentialDrafts.set(provider, {
+      apiKey: card.querySelector('[data-field="api-key"]').value,
+      baseUrl: card.querySelector('[data-field="base-url"]')?.value || "",
+    });
+  });
+}
+
+function makeCredentialField({ id, label, type, value, placeholder, field }) {
+  const wrapper = document.createElement("label");
+  wrapper.htmlFor = id;
+  wrapper.textContent = label;
+  const input = document.createElement("input");
+  input.id = id;
+  input.type = type;
+  input.value = value;
+  input.placeholder = placeholder;
+  input.autocomplete = "off";
+  input.dataset.field = field;
+  input.addEventListener("input", invalidateApiTest);
+  wrapper.append(input);
+  return wrapper;
+}
+
+function renderProviderCredentials({ preserve = true } = {}) {
+  if (preserve) captureProviderCredentials();
+  providerCredentials.replaceChildren();
+
+  selectedProviders().forEach((provider) => {
+    const preset = PROVIDER_PRESETS[provider];
+    const draft = credentialDrafts.get(provider) || {
+      apiKey: "",
+      baseUrl: preset.baseUrl || "",
+    };
+    const card = document.createElement("article");
+    card.className = "provider-credential";
+    card.classList.toggle("single-field", preset.baseUrl === null);
+    card.dataset.provider = provider;
+
+    const heading = document.createElement("div");
+    heading.className = "provider-credential-heading";
+    const title = document.createElement("strong");
+    title.textContent = preset.label;
+    const protocol = document.createElement("span");
+    protocol.textContent = preset.baseUrl === null ? "原生 SDK" : "OpenAI 兼容";
+    heading.append(title, protocol);
+    card.append(heading);
+
+    card.append(makeCredentialField({
+      id: `${provider}-api-key`,
+      label: `${preset.label} API Key`,
+      type: "password",
+      value: draft.apiKey,
+      placeholder: "只保存在当前服务内存",
+      field: "api-key",
+    }));
+
+    if (preset.baseUrl !== null) {
+      card.append(makeCredentialField({
+        id: `${provider}-base-url`,
+        label: `${preset.label} Base URL · 仅支持 HTTPS`,
+        type: "url",
+        value: draft.baseUrl,
+        placeholder: "https://api.example.com/v1",
+        field: "base-url",
+      }));
+    }
+    providerCredentials.append(card);
+  });
+}
+
+function useProviderPreset(providerSelect, modelInput) {
+  const preset = PROVIDER_PRESETS[providerSelect.value];
+  modelInput.value = preset.defaultModel;
+  renderProviderCredentials();
+  invalidateApiTest();
 };
 
 let testedConfigId = null;
@@ -49,7 +171,8 @@ function modelId(provider, name) {
 
 function renderCurrent(config) {
   if (!config.configured) {
-    currentRuntime.textContent = config.error;
+    currentRuntimeModel.textContent = "尚未配置可用模型";
+    currentRuntimeDetail.textContent = config.error;
     currentRuntime.classList.add("error");
     return;
   }
@@ -58,7 +181,8 @@ function renderCurrent(config) {
   const assessment = config.chat_model_id === config.assessment_model_id
     ? "主模型同时负责评价"
     : `评价 ${config.assessment_model_id}`;
-  currentRuntime.textContent = `版本 ${config.version} · ${mode} · ${config.chat_model_id} · ${assessment}`;
+  currentRuntimeModel.textContent = config.chat_model_id;
+  currentRuntimeDetail.textContent = `版本 ${config.version} · ${mode} · ${assessment}`;
 }
 
 function invalidateApiTest() {
@@ -69,18 +193,21 @@ function invalidateApiTest() {
 
 function setBusy(form, busy) {
   form.classList.toggle("loading", busy);
+  form.setAttribute("aria-busy", String(busy));
   form.querySelectorAll("button").forEach((button) => {
     button.disabled = busy || (button === applyApiButton && !testedConfigId);
   });
 }
 
-[
-  apiChatProvider,
-  apiChatModel,
-  apiAssessmentProvider,
-  apiAssessmentModel,
-  ...Object.values(keyInputs),
-].forEach((element) => element.addEventListener("input", invalidateApiTest));
+apiChatProvider.addEventListener("change", () => {
+  useProviderPreset(apiChatProvider, apiChatModel);
+});
+apiAssessmentProvider.addEventListener("change", () => {
+  useProviderPreset(apiAssessmentProvider, apiAssessmentModel);
+});
+[apiChatModel, apiAssessmentModel].forEach((element) => {
+  element.addEventListener("input", invalidateApiTest);
+});
 
 apiForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -89,12 +216,21 @@ apiForm.addEventListener("submit", async (event) => {
   testedConfigId = null;
   setBusy(apiForm, true);
   try {
-    const providers = new Set([apiChatProvider.value, apiAssessmentProvider.value]);
+    captureProviderCredentials();
+    const providers = new Set(selectedProviders());
     const apiKeys = {};
+    const baseUrls = {};
     for (const provider of providers) {
-      const value = keyInputs[provider].value.trim();
+      const preset = PROVIDER_PRESETS[provider];
+      const draft = credentialDrafts.get(provider) || {};
+      const value = (draft.apiKey || "").trim();
       if (!value) throw new Error(`请填写 ${provider} API Key。`);
       apiKeys[provider] = value;
+      if (preset.baseUrl !== null) {
+        const baseUrl = (draft.baseUrl || "").trim();
+        if (!baseUrl) throw new Error(`请填写 ${preset.label} Base URL。`);
+        baseUrls[provider] = baseUrl;
+      }
     }
     const tested = await request(
       "/api/model-config/test",
@@ -102,6 +238,7 @@ apiForm.addEventListener("submit", async (event) => {
         chat_model_id: modelId(apiChatProvider.value, apiChatModel.value),
         assessment_model_id: modelId(apiAssessmentProvider.value, apiAssessmentModel.value),
         api_keys: apiKeys,
+        base_urls: baseUrls,
       }),
     );
     testedConfigId = tested.test_id;
@@ -124,7 +261,10 @@ applyApiButton.addEventListener("click", async () => {
       jsonOptions("PUT", { auth_mode: "api", test_id: testedConfigId }),
     );
     testedConfigId = null;
-    Object.values(keyInputs).forEach((input) => { input.value = ""; });
+    credentialDrafts.forEach((draft, provider) => {
+      credentialDrafts.set(provider, { ...draft, apiKey: "" });
+    });
+    renderProviderCredentials({ preserve: false });
     renderCurrent(config);
     apiStatus.textContent = "配置已应用，只影响之后创建的新会话。";
   } catch (error) {
@@ -186,6 +326,9 @@ cliForm.addEventListener("submit", async (event) => {
 request("/api/model-config")
   .then(renderCurrent)
   .catch((error) => {
-    currentRuntime.textContent = errorDetail(error);
+    currentRuntimeModel.textContent = "无法读取当前模型";
+    currentRuntimeDetail.textContent = errorDetail(error);
     currentRuntime.classList.add("error");
   });
+
+renderProviderCredentials({ preserve: false });

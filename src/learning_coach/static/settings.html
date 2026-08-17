@@ -20,15 +20,31 @@
 
     <main class="settings-shell">
       <section class="settings-hero" aria-labelledby="settings-title">
-        <p class="eyebrow">LOCAL MODEL CONTROL</p>
-        <h1 id="settings-title">选择模型，也守住凭据边界。</h1>
-        <p>
-          API Key 仅保存在当前服务进程内存，不写入 .env、数据库或浏览器存储；
-          服务重启后会恢复启动时配置。模型切换只影响之后创建的新会话。
-        </p>
-        <div class="current-runtime" id="current-runtime" role="status">
-          正在读取当前模型运行时…
+        <div class="settings-hero-copy">
+          <p class="eyebrow">LOCAL MODEL CONTROL</p>
+          <h1 id="settings-title">选择模型，也守住凭据边界。</h1>
+          <p>
+            API Key 仅保存在当前服务进程内存，不写入 .env、数据库或浏览器存储；
+            现在可直接选择 DeepSeek、通义千问和智谱 GLM，也可连接其他 OpenAI
+            兼容服务。服务重启后会恢复启动时配置，模型切换只影响之后创建的新会话。
+          </p>
         </div>
+        <div class="current-runtime" id="current-runtime" role="status">
+          <span class="runtime-beacon" aria-hidden="true"></span>
+          <span class="runtime-copy">
+            <small>当前运行时</small>
+            <strong id="current-runtime-model">正在读取模型配置…</strong>
+            <span id="current-runtime-detail">稍候，正在确认当前服务状态。</span>
+          </span>
+          <a class="runtime-action" href="/">开始新会话 <span aria-hidden="true">→</span></a>
+        </div>
+      </section>
+
+      <section class="provider-showcase" aria-label="支持的国产模型 Provider">
+        <article><span>DS</span><div><strong>DeepSeek</strong><small>官方兼容接口</small></div></article>
+        <article><span>QW</span><div><strong>通义千问</strong><small>阿里云百炼</small></div></article>
+        <article><span>GL</span><div><strong>智谱 GLM</strong><small>BigModel 开放平台</small></div></article>
+        <article><span>＋</span><div><strong>自定义兼容</strong><small>Kimi、硅基流动等</small></div></article>
       </section>
 
       <div class="settings-grid">
@@ -37,10 +53,10 @@
             <span class="settings-number">01</span>
             <div>
               <h2 id="api-settings-title">模型 API</h2>
-              <p>支持当前项目已有的 OpenAI、Anthropic 与 Google GenAI。</p>
+              <p>国际与国产模型使用同一条测试、应用和会话隔离流程。</p>
             </div>
           </div>
-          <form id="api-config-form">
+          <form id="api-config-form" aria-busy="false">
             <div class="model-role-grid">
               <fieldset>
                 <legend>主模型</legend>
@@ -49,6 +65,10 @@
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="google_genai">Google GenAI</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="dashscope">通义千问 · 阿里云百炼</option>
+                  <option value="zhipu">智谱 GLM</option>
+                  <option value="openai_compatible">自定义 OpenAI 兼容接口</option>
                 </select>
                 <label for="api-chat-model">模型名称</label>
                 <input id="api-chat-model" type="text" value="gpt-5-mini" required />
@@ -60,22 +80,25 @@
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="google_genai">Google GenAI</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="dashscope">通义千问 · 阿里云百炼</option>
+                  <option value="zhipu">智谱 GLM</option>
+                  <option value="openai_compatible">自定义 OpenAI 兼容接口</option>
                 </select>
                 <label for="api-assessment-model">模型名称</label>
                 <input id="api-assessment-model" type="text" value="gpt-5-mini" required />
               </fieldset>
             </div>
-            <div class="key-grid">
-              <label for="openai-api-key">OpenAI API Key
-                <input id="openai-api-key" type="password" autocomplete="off" />
-              </label>
-              <label for="anthropic-api-key">Anthropic API Key
-                <input id="anthropic-api-key" type="password" autocomplete="off" />
-              </label>
-              <label for="google-genai-api-key">Google GenAI API Key
-                <input id="google-genai-api-key" type="password" autocomplete="off" />
-              </label>
-            </div>
+            <section class="credentials-panel" aria-labelledby="credentials-title">
+              <div class="section-label">
+                <div>
+                  <h3 id="credentials-title">连接凭据</h3>
+                  <p>这里只显示主模型和评价模型实际需要的 Provider。</p>
+                </div>
+                <span>仅存内存</span>
+              </div>
+              <div id="provider-credentials" class="provider-credentials" aria-live="polite"></div>
+            </section>
             <p class="cost-notice">
               测试会向所选 Provider 发起最小真实请求，可能产生少量费用；
               测试成功后才可应用配置。
@@ -99,7 +122,7 @@
               <p>由 Codex 或 Claude 官方命令完成认证，本服务不读取令牌文件。</p>
             </div>
           </div>
-          <form id="cli-config-form">
+          <form id="cli-config-form" aria-busy="false">
             <label for="cli-provider">选择 CLI</label>
             <select id="cli-provider">
               <option value="codex">Codex CLI</option>
@@ -123,7 +146,7 @@
       </div>
 
       <aside class="memory-boundary">
-        <strong>内存保存边界</strong>
+        <strong>无需 .env · 内存保存边界</strong>
         <span>API Key 只进不出，刷新页面后输入框不会自动恢复。</span>
         <span>服务重启会清除页面应用的 API 配置。</span>
         <span>已经开始的学习会话继续使用创建时的模型版本。</span>

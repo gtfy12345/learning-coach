@@ -6,8 +6,11 @@ from typing import Any
 import pytest
 
 from learning_coach.model_config import (
+    API_PROVIDERS,
+    OPENAI_COMPATIBLE_PROVIDER_DEFAULTS,
     ApiModelConfigInput,
     RuntimeModelConfigService,
+    resolve_api_base_urls,
 )
 
 
@@ -30,6 +33,53 @@ def api_input(secret: str = "sk-super-secret") -> ApiModelConfigInput:
         assessment_model_id="anthropic:claude-sonnet-4-6",
         api_keys={"openai": secret, "anthropic": "anthropic-secret"},
     )
+
+
+def test_domestic_openai_compatible_providers_have_explicit_defaults() -> None:
+    assert {"deepseek", "dashscope", "zhipu", "openai_compatible"} <= API_PROVIDERS
+    assert OPENAI_COMPATIBLE_PROVIDER_DEFAULTS == {
+        "deepseek": "https://api.deepseek.com",
+        "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+        "openai_compatible": None,
+    }
+
+
+def test_compatible_base_urls_use_defaults_and_require_custom_endpoint() -> None:
+    assert resolve_api_base_urls({"deepseek", "openai"}, {}) == {
+        "deepseek": "https://api.deepseek.com"
+    }
+
+    with pytest.raises(ValueError, match="自定义兼容接口.*Base URL"):
+        resolve_api_base_urls({"openai_compatible"}, {})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://models.example.com/v1",
+        "https://user:password@models.example.com/v1",
+        "https://models.example.com/v1?token=secret",
+        "https://models.example.com/v1#fragment",
+        "https:///missing-host",
+    ],
+)
+def test_compatible_base_urls_reject_unsafe_urls(url: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS|凭据|查询参数|片段|主机"):
+        resolve_api_base_urls(
+            {"openai_compatible"},
+            {"openai_compatible": url},
+        )
+
+
+def test_compatible_base_urls_only_process_selected_providers() -> None:
+    assert resolve_api_base_urls(
+        {"deepseek"},
+        {
+            "deepseek": "https://gateway.example.com/deepseek/",
+            "openai_compatible": "http://unused.internal/v1",
+        },
+    ) == {"deepseek": "https://gateway.example.com/deepseek"}
 
 
 def make_service(
@@ -73,6 +123,36 @@ def test_api_candidate_is_private_and_only_applies_after_successful_test() -> No
     assert applied.runtime.model_name == "openai:gpt-5-mini"
     with pytest.raises(ValueError, match="无效或已使用"):
         service.apply_tested(tested.test_id)
+
+
+def test_domestic_candidate_passes_resolved_endpoints_to_model_settings() -> None:
+    service, factory = make_service()
+
+    tested = service.test_api_config(
+        ApiModelConfigInput(
+            chat_model_id="deepseek:deepseek-v4-flash",
+            assessment_model_id="dashscope:qwen-plus",
+            api_keys={
+                "deepseek": "deepseek-secret",
+                "dashscope": "dashscope-secret",
+            },
+            base_urls={
+                "dashscope": "https://workspace.example.com/compatible-mode/v1/"
+            },
+        )
+    )
+
+    settings, keys = factory.seen[-1]
+    assert settings.api_base_urls == {
+        "deepseek": "https://api.deepseek.com",
+        "dashscope": "https://workspace.example.com/compatible-mode/v1",
+    }
+    assert keys == {
+        "deepseek": "deepseek-secret",
+        "dashscope": "dashscope-secret",
+    }
+    assert tested.config.chat_provider == "deepseek"
+    assert tested.config.assessment_provider == "dashscope"
 
 
 def test_api_candidate_requires_each_selected_provider_key() -> None:
@@ -153,7 +233,14 @@ def test_public_docs_explain_teach_first_and_memory_only_model_settings() -> Non
         "仅保存在当前服务进程内存",
         "只影响之后创建的新会话",
         ".env 不是必需",
+        "DeepSeek",
+        "通义千问",
+        "智谱 GLM",
+        "自定义 OpenAI 兼容",
+        "仅接受 HTTPS",
     ):
         assert term in readme
     assert "可选启动配置" in env_example
     assert "设置页" in env_example
+    assert "DeepSeek、通义千问、智谱 GLM" in env_example
+    assert "HTTPS" in env_example

@@ -88,6 +88,55 @@ def test_model_config_api_tests_then_applies_without_echoing_secrets() -> None:
     assert reused.status_code == 422
 
 
+def test_domestic_model_config_keeps_logical_provider_and_hides_connection_input() -> None:
+    client, _auth_calls, secret_calls = make_settings_client()
+    secret = "deepseek-private-secret"
+    base_url = "https://gateway.example.com/deepseek"
+
+    tested = client.post(
+        "/api/model-config/test",
+        headers=same_origin_headers(),
+        json={
+            "chat_model_id": "deepseek:deepseek-v4-flash",
+            "assessment_model_id": "zhipu:glm-5-turbo",
+            "api_keys": {
+                "deepseek": secret,
+                "zhipu": "zhipu-private-secret",
+            },
+            "base_urls": {"deepseek": base_url},
+        },
+    )
+
+    assert tested.status_code == 200
+    assert tested.json()["config"]["chat_provider"] == "deepseek"
+    assert tested.json()["config"]["assessment_provider"] == "zhipu"
+    assert secret_calls[-1]["deepseek"] == secret
+    assert secret not in tested.text
+    assert base_url not in tested.text
+    assert "base_urls" not in tested.text
+
+
+def test_custom_compatible_api_rejects_unsafe_endpoint_without_echoing_secret() -> None:
+    client, _auth_calls, secret_calls = make_settings_client()
+    secret = "custom-private-secret"
+
+    response = client.post(
+        "/api/model-config/test",
+        headers=same_origin_headers(),
+        json={
+            "chat_model_id": "openai_compatible:custom-model",
+            "api_keys": {"openai_compatible": secret},
+            "base_urls": {
+                "openai_compatible": "http://127.0.0.1:9000/v1?token=visible"
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert secret_calls == []
+    assert secret not in response.text
+
+
 def test_invalid_model_config_request_does_not_echo_api_key() -> None:
     client, _auth_calls, _secret_calls = make_settings_client()
 

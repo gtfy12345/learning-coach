@@ -14,6 +14,8 @@
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [国产模型兼容接入与模型页面优化 Follow-up](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/) | [implementation](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/implementation-checklist.md) | 1.0 | 2026-08-17 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings-follow-up-domestic-models-ui/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 | [先教后测与本地模型设置 Follow-up](./evaluation-security-delivery-follow-up-teach-first-model-settings/) | [implementation](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation-checklist.md) | 1.0 | 2026-08-17 |
 | ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 | [Codex CLI Exec 兼容性 Follow-up](./official-cli-login-follow-up-codex-exec-compatibility/) | [implementation](./official-cli-login-follow-up-codex-exec-compatibility/implementation.md) / [checklist](./official-cli-login-follow-up-codex-exec-compatibility/implementation-checklist.md) | 1.0 | 2026-08-17 |

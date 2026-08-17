@@ -30,7 +30,7 @@ flowchart LR
 
 - 可在浏览器完成完整学习闭环的本地 Web MVP
 - 默认“先教学再检查”，并保留可选的“先诊断再讲解”模式
-- 独立本机模型设置页：API 配置测试后应用，或选择 Codex/Claude 官方 CLI 登录
+- 独立本机模型设置页：支持 OpenAI、Anthropic、Google、DeepSeek、通义千问、智谱 GLM 与自定义 OpenAI 兼容接口，API 配置测试后应用，也可选择 Codex/Claude 官方 CLI 登录
 - LangChain 模型统一接口与 Messages
 - 主模型与评价模型可使用不同 Provider
 - API Key 与官方 CLI 登录两种认证通道
@@ -104,6 +104,8 @@ PYTHONPATH=src python -m learning_coach web
 打开 [http://127.0.0.1:8000/settings](http://127.0.0.1:8000/settings)：
 
 - API 模式选择主模型和评价模型，填写实际使用的 Provider Key。配置必须先测试，测试会发起最小真实请求并可能产生少量费用；成功后才可应用。
+- 页面内置 DeepSeek、通义千问（阿里云百炼）与智谱 GLM 的推荐模型和官方兼容地址；主模型与评价模型可分别选择，使用同一 Provider 时凭据只填写一次。
+- Kimi、硅基流动等平台可选择“自定义 OpenAI 兼容接口”并填写模型名、API Key 与 Base URL；自定义地址仅接受 HTTPS，且不能包含用户凭据、查询参数或片段。
 - CLI 模式选择 Codex 或 Claude，使用页面的状态、登录、退出按钮委托官方命令，再应用对应 CLI 模型。
 - 页面提交的 API Key 仅保存在当前服务进程内存，不写 `.env`、数据库或浏览器存储；刷新页面不回填，服务重启即清除。
 - 配置切换只影响之后创建的新会话，已经开始的会话继续使用创建时绑定的模型版本。
@@ -520,7 +522,7 @@ CHAT_MODEL_ID=google_genai:gemini-2.5-flash-lite
 GOOGLE_API_KEY=你的 Google API Key
 ```
 
-LangChain 会根据 `provider:model` 前缀加载对应集成。项目安装了 OpenAI、Anthropic 和 Google GenAI 三个 Provider；其他 Provider 需要自行安装它的 LangChain 集成包。
+启动配置中，LangChain 会根据 `provider:model` 前缀加载原生集成；项目安装了 OpenAI、Anthropic 和 Google GenAI。Web 设置页另外通过现有 OpenAI 驱动接入 DeepSeek、通义千问、智谱 GLM 和自定义 OpenAI 兼容服务，不需要再安装厂商 SDK。
 
 ### 官方 CLI 登录模式
 
@@ -575,7 +577,9 @@ CLI 模式的执行边界：
 
 ### OpenAI-compatible 服务
 
-符合 OpenAI Chat Completions 规范的服务继续使用 `openai:` 前缀，并配置 endpoint：
+Web 设置页可以直接选择 `deepseek:`、`dashscope:`、`zhipu:` 或 `openai_compatible:` 逻辑 Provider。页面会带出内置 Provider 的推荐地址；自定义 OpenAI 兼容 Base URL 仅接受 HTTPS。所有兼容模型仍必须先完成真实最小结构化输出测试，测试失败不会替换当前运行时。
+
+如果使用 `.env` 做可复现的启动配置，符合 OpenAI Chat Completions 规范的服务继续使用 `openai:` 前缀并配置 endpoint：
 
 ```dotenv
 CHAT_MODEL_ID=openai:你的模型名
