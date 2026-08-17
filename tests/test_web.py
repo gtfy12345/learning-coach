@@ -218,10 +218,46 @@ def test_model_navigation_and_settings_layout_are_accessible_and_responsive() ->
     assert 'aria-label="打开模型与连接设置"' in home
     assert 'for="api-chat-provider"' in settings
     assert 'for="api-assessment-provider"' in settings
-    assert "wrapper.htmlFor = id" in script
+    assert "labelElement.htmlFor = id" in script
     assert ":focus-visible" in styles
     assert "@media (max-width: 640px)" in styles
     assert "overflow-wrap: anywhere" in styles
+
+
+def test_settings_page_supports_quick_select_suggestions_and_ticket_countdown() -> None:
+    client, _ = make_client()
+
+    page = client.get("/settings").text
+    script = client.get("/static/settings.js").text
+    styles = client.get("/static/styles.css").text
+
+    assert 'data-provider="deepseek"' in page
+    assert 'data-provider="dashscope"' in page
+    assert 'data-provider="zhipu"' in page
+    assert 'data-provider="openai_compatible"' in page
+    assert 'aria-pressed="false"' in page
+    assert "selectChatProvider" in script
+    assert "syncProviderShowcase" in script
+
+    assert 'list="chat-model-suggestions"' in page
+    assert 'list="assessment-model-suggestions"' in page
+    assert "<datalist" in page
+    assert "refreshModelSuggestions" in script
+    assert "modelDrafts" in script
+    assert "deepseek-chat" in script
+    assert "glm-5-turbo" in script
+
+    assert "startTicketCountdown" in script
+    assert "formatCountdown" in script
+    assert "clearTicketCountdown" in script
+    assert "测试票据已过期，请重新测试连接。" in script
+
+    assert "toggle-visibility" in script
+    assert "visibility-toggle" in styles
+    assert 'input[type="url"]' in styles
+    assert "isHttpsBaseUrl" in script
+    assert "aria-invalid" in script
+    assert "Base URL 仅支持 HTTPS" in script
 
 
 def test_web_session_runs_diagnosis_quiz_and_summary() -> None:

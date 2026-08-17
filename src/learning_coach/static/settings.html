@@ -40,11 +40,19 @@
         </div>
       </section>
 
-      <section class="provider-showcase" aria-label="支持的国产模型 Provider">
-        <article><span>DS</span><div><strong>DeepSeek</strong><small>官方兼容接口</small></div></article>
-        <article><span>QW</span><div><strong>通义千问</strong><small>阿里云百炼</small></div></article>
-        <article><span>GL</span><div><strong>智谱 GLM</strong><small>BigModel 开放平台</small></div></article>
-        <article><span>＋</span><div><strong>自定义兼容</strong><small>Kimi、硅基流动等</small></div></article>
+      <section class="provider-showcase" aria-label="支持的国产模型 Provider，点击填入主模型">
+        <button type="button" data-provider="deepseek" aria-pressed="false" title="点击把主模型切换为 DeepSeek">
+          <span>DS</span><div><strong>DeepSeek</strong><small>官方兼容接口 · 点击选用</small></div>
+        </button>
+        <button type="button" data-provider="dashscope" aria-pressed="false" title="点击把主模型切换为通义千问">
+          <span>QW</span><div><strong>通义千问</strong><small>阿里云百炼 · 点击选用</small></div>
+        </button>
+        <button type="button" data-provider="zhipu" aria-pressed="false" title="点击把主模型切换为智谱 GLM">
+          <span>GL</span><div><strong>智谱 GLM</strong><small>BigModel 开放平台 · 点击选用</small></div>
+        </button>
+        <button type="button" data-provider="openai_compatible" aria-pressed="false" title="点击切换到自定义 OpenAI 兼容接口">
+          <span>＋</span><div><strong>自定义兼容</strong><small>Kimi、硅基流动等 · 点击填写</small></div>
+        </button>
       </section>
 
       <div class="settings-grid">
@@ -71,7 +79,7 @@
                   <option value="openai_compatible">自定义 OpenAI 兼容接口</option>
                 </select>
                 <label for="api-chat-model">模型名称</label>
-                <input id="api-chat-model" type="text" value="gpt-5-mini" required />
+                <input id="api-chat-model" type="text" value="gpt-5-mini" list="chat-model-suggestions" required />
               </fieldset>
               <fieldset>
                 <legend>评价模型</legend>
@@ -86,9 +94,11 @@
                   <option value="openai_compatible">自定义 OpenAI 兼容接口</option>
                 </select>
                 <label for="api-assessment-model">模型名称</label>
-                <input id="api-assessment-model" type="text" value="gpt-5-mini" required />
+                <input id="api-assessment-model" type="text" value="gpt-5-mini" list="assessment-model-suggestions" required />
               </fieldset>
             </div>
+            <datalist id="chat-model-suggestions"></datalist>
+            <datalist id="assessment-model-suggestions"></datalist>
             <section class="credentials-panel" aria-labelledby="credentials-title">
               <div class="section-label">
                 <div>
