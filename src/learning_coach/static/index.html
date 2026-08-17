@@ -22,9 +22,12 @@
           <small>AI 学习教练</small>
         </span>
       </a>
-      <div class="model-pill" id="model-pill" role="status">
-        <span class="status-dot"></span>
-        <span id="model-label">正在检查模型配置</span>
+      <div class="header-actions">
+        <a class="text-link" href="/settings">模型设置</a>
+        <div class="model-pill" id="model-pill" role="status">
+          <span class="status-dot"></span>
+          <span id="model-label">正在检查模型配置</span>
+        </div>
       </div>
     </header>
 
@@ -32,10 +35,10 @@
       <section class="workspace" aria-labelledby="page-title">
         <div id="setup-view">
           <div class="eyebrow"><span>02.5</span> WEB MVP</div>
-          <h1 id="page-title">别急着听答案，<br />先让我看看你卡在哪里。</h1>
+          <h1 id="page-title">先把关键概念讲清楚，<br />再看看你是否真正掌握。</h1>
           <p class="hero-copy">
-            输入一个学习主题。教练会先诊断，再针对你的回答讲解、出题和评价；
-            没掌握的部分会自动补讲，直到形成一份诚实的学习小结。
+            输入一个学习主题。教练默认先教学再检查理解，随后用迁移练习评价；
+            你也可以切换为先诊断，快速定位已有基础和知识缺口。
           </p>
 
           <form id="start-form" class="start-card">
@@ -51,12 +54,23 @@
                 required
               />
               <button class="primary-button" type="submit">
-                <span>开始诊断</span><span aria-hidden="true">→</span>
+                <span>开始学习</span><span aria-hidden="true">→</span>
               </button>
               <button class="text-button cancel-button" id="cancel-start" type="button" hidden>
                 停止
               </button>
             </div>
+
+            <label class="material-box" for="learning-mode">
+              <span>
+                <strong>选择学习方式</strong>
+                <small>默认先讲解再检查；熟悉主题时可先诊断</small>
+              </span>
+              <select id="learning-mode" name="learning_mode">
+                <option value="teach_first" selected>先教学再检查（推荐）</option>
+                <option value="diagnose_first">先诊断再针对讲解</option>
+              </select>
+            </label>
 
             <label class="material-box" for="learning-goal">
               <span>
@@ -143,9 +157,9 @@
           </form>
 
           <div class="feature-strip" aria-label="学习流程">
-            <div><span>01</span><strong>定位</strong><small>先诊断真实基础</small></div>
-            <div><span>02</span><strong>讲透</strong><small>围绕薄弱点解释</small></div>
-            <div><span>03</span><strong>练会</strong><small>用新问题检验理解</small></div>
+            <div><span>01</span><strong>讲清</strong><small>先建立关键理解</small></div>
+            <div><span>02</span><strong>检查</strong><small>确认是否真正掌握</small></div>
+            <div><span>03</span><strong>练会</strong><small>用新问题验证迁移</small></div>
             <div><span>04</span><strong>收束</strong><small>评分、补救与小结</small></div>
           </div>
         </div>
@@ -255,8 +269,9 @@
           <div><strong>学习路径</strong><small id="panel-status">等待开始</small></div>
         </div>
         <ol class="progress-list" id="progress-list">
-          <li data-step="diagnostic"><span>1</span><div><strong>诊断</strong><small>找到真实起点</small></div></li>
-          <li data-step="teach"><span>2</span><div><strong>讲解</strong><small>只补最关键的缺口</small></div></li>
+          <li data-step="teach"><span>1</span><div><strong>教学</strong><small>建立关键理解</small></div></li>
+          <li data-step="understanding_check"><span>2</span><div><strong>理解检查</strong><small>用自己的话说明</small></div></li>
+          <li data-step="diagnostic" hidden><span>1</span><div><strong>诊断</strong><small>找到真实起点</small></div></li>
           <li data-step="quiz"><span>3</span><div><strong>练习</strong><small>换一道题验证迁移</small></div></li>
           <li data-step="assessment"><span>4</span><div><strong>评价</strong><small>结构化评分与反馈</small></div></li>
           <li data-step="summary"><span>5</span><div><strong>小结</strong><small>明确下一步练什么</small></div></li>
@@ -272,7 +287,7 @@
           <span id="context-budget">预算将在讲解后显示</span>
           <span id="context-ingestion">尚未摄取学习资料</span>
           <span id="context-retrieval">检索将在讲解时运行</span>
-          <span id="context-events">Agent 并行轨迹将在诊断回答后显示</span>
+          <span id="context-events">Agent 轨迹将在教学开始后显示</span>
           <span id="context-memory">长期记忆将在会话开始后显示</span>
         </div>
         <div class="context-insight" id="time-travel" hidden>

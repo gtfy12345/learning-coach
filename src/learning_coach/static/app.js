@@ -4,6 +4,7 @@ const startForm = document.querySelector("#start-form");
 const answerForm = document.querySelector("#answer-form");
 const topicInput = document.querySelector("#topic");
 const learningGoalInput = document.querySelector("#learning-goal");
+const learningModeInput = document.querySelector("#learning-mode");
 const imageInput = document.querySelector("#image");
 const studyMaterialInput = document.querySelector("#study-material");
 const materialsInput = document.querySelector("#materials");
@@ -53,6 +54,7 @@ const codeSafetyNotice = document.querySelector("#code-safety-notice");
 let sessionId = null;
 let activeController = null;
 let currentCodeExercise = null;
+let currentLearningMode = "teach_first";
 
 function errorDetail(error) {
   const detail = error?.detail;
@@ -99,7 +101,7 @@ async function requestStream(url, options, onEvent) {
 
 function setLoading(form, isLoading) {
   form.classList.toggle("loading", isLoading);
-  form.querySelectorAll("button, input, textarea").forEach((element) => {
+  form.querySelectorAll("button, input, textarea, select").forEach((element) => {
     element.disabled = isLoading;
   });
 }
@@ -254,16 +256,22 @@ function retrievalText(report) {
 }
 
 function setProgress(stage, completed = false) {
-  const order = ["diagnostic", "teach", "quiz", "assessment", "summary"];
+  const order = currentLearningMode === "diagnose_first"
+    ? ["diagnostic", "teach", "quiz", "assessment", "summary"]
+    : ["teach", "understanding_check", "quiz", "assessment", "summary"];
   const normalizedStage = stage === "teaching" ? "teach" : stage;
   const activeIndex = completed ? order.length : order.indexOf(normalizedStage);
-  document.querySelectorAll("#progress-list li").forEach((item, index) => {
-    item.classList.toggle("done", index < activeIndex || completed);
-    item.classList.toggle("active", !completed && index === activeIndex);
+  document.querySelectorAll("#progress-list li").forEach((item) => {
+    const itemIndex = order.indexOf(item.dataset.step);
+    item.hidden = itemIndex < 0;
+    if (itemIndex < 0) return;
+    item.classList.toggle("done", itemIndex < activeIndex || completed);
+    item.classList.toggle("active", !completed && itemIndex === activeIndex);
   });
   const labels = {
     diagnostic: "正在诊断基础",
     teach: "正在针对薄弱点讲解",
+    understanding_check: "等待理解检查回答",
     quiz: "等待练习回答",
     assessment: "正在评价掌握程度",
     summary: "学习闭环已完成",
@@ -277,10 +285,12 @@ function learningEventsText(data) {
   const reviews = data.teaching_reviews || [];
   const plan = data.teaching_plan;
   if (!events.length && !handoffs.length) {
-    return "Agent 并行轨迹将在诊断回答后显示";
+    return "Agent 轨迹将在教学开始后显示";
   }
   const labels = {
     teach: "讲解",
+    teach_initial: "基础教学",
+    assess_understanding: "理解检查",
     prepare_practice: "练习准备",
     assess: "评价",
     recall_memory: "记忆召回",
@@ -335,12 +345,26 @@ function updateContextInsight(data) {
 }
 
 function showQuestion(data, streamedTasks = new Set()) {
+  currentLearningMode = data.learning_mode || currentLearningMode;
   updateContextInsight(data);
   refreshMilestones();
   approvalActions.hidden = data.stage !== "approval";
   if (data.stage === "diagnostic") {
     addMessage("coach", "诊断问题", data.question);
     setProgress("diagnostic");
+    return;
+  }
+
+  if (data.stage === "understanding_check") {
+    if (data.sources?.length && !streamedTasks.has("sources")) {
+      addMessage("assessment", "本轮参考资料", sourceText(data.sources));
+    }
+    if (data.explanation && !streamedTasks.has("teaching")) {
+      addMessage("coach", "基础教学", data.explanation);
+    }
+    addMessage("coach", "理解检查", data.question);
+    answerInput.placeholder = "用自己的话说明你的理解；不确定也没关系。";
+    setProgress("understanding_check");
     return;
   }
 
@@ -410,9 +434,11 @@ function showResult(data) {
 startForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   setupError.textContent = "";
+  currentLearningMode = learningModeInput.value;
   setLoading(startForm, true);
   const formData = new FormData();
   formData.append("topic", topicInput.value);
+  formData.append("learning_mode", learningModeInput.value);
   if (learningGoalInput.value.trim()) {
     formData.append("learning_goal", learningGoalInput.value);
   }
@@ -446,6 +472,7 @@ startForm.addEventListener("submit", async (event) => {
     );
     if (!finalState) throw { detail: "模型运行没有返回最终状态。" };
     sessionId = finalState.session_id;
+    currentLearningMode = finalState.learning_mode || learningModeInput.value;
     setupView.hidden = true;
     sessionView.hidden = false;
     document.querySelector("#session-topic").textContent = finalState.topic;
@@ -629,6 +656,7 @@ materialsInput.addEventListener("change", () => {
 
 document.querySelector("#restart-button").addEventListener("click", () => {
   sessionId = null;
+  currentLearningMode = learningModeInput.value;
   timeline.replaceChildren();
   resultCard.hidden = true;
   answerCard.hidden = false;
@@ -648,7 +676,7 @@ document.querySelector("#restart-button").addEventListener("click", () => {
   contextRetrieval.textContent = "检索将在讲解时运行";
   renderKnowledgeGraph(null);
   renderCodePractice(null);
-  answerInput.placeholder = "用自己的话回答。不确定也没关系，诊断比猜对更重要。";
+  answerInput.placeholder = "用自己的话回答。不确定也没关系。";
   topicInput.focus();
 });
 

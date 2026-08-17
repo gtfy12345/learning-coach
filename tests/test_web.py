@@ -121,7 +121,51 @@ def test_home_page_exposes_the_learning_product() -> None:
 
     assert response.status_code == 200
     assert "AI 学习教练" in response.text
-    assert "开始诊断" in response.text
+    assert "开始学习" in response.text
+
+
+def test_home_page_defaults_to_teach_first_and_links_model_settings() -> None:
+    client, _ = make_client()
+
+    page = client.get("/").text
+    script = client.get("/static/app.js").text
+
+    assert 'href="/settings"' in page
+    assert 'id="learning-mode"' in page
+    assert 'value="teach_first"' in page
+    assert 'value="diagnose_first"' in page
+    assert "先教学再检查" in page
+    assert 'formData.append("learning_mode"' in script
+    assert 'data.stage === "understanding_check"' in script
+
+
+def test_settings_page_exposes_api_test_gate_and_cli_auth_controls() -> None:
+    client, _ = make_client()
+
+    response = client.get("/settings")
+    script = client.get("/static/settings.js")
+
+    assert response.status_code == 200
+    assert 'id="api-chat-provider"' in response.text
+    assert 'id="api-assessment-provider"' in response.text
+    assert 'id="openai-api-key"' in response.text
+    assert 'id="anthropic-api-key"' in response.text
+    assert 'id="google-genai-api-key"' in response.text
+    assert 'id="test-api-config"' in response.text
+    assert 'id="apply-api-config"' in response.text
+    assert "disabled" in response.text
+    assert "最小真实请求" in response.text
+    assert "仅保存在当前服务进程内存" in response.text
+    assert 'id="cli-provider"' in response.text
+    assert 'id="cli-login"' in response.text
+    assert 'id="cli-status"' in response.text
+    assert 'id="cli-logout"' in response.text
+    assert "/api/model-config/test" in script.text
+    assert "/api/model-config" in script.text
+    assert "/api/model-auth/" in script.text
+    assert "localStorage" not in script.text
+    assert "sessionStorage" not in script.text
+    assert "document.cookie" not in script.text
 
 
 def test_web_session_runs_diagnosis_quiz_and_summary() -> None:

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Learning Coach 本机模型设置" />
+    <title>模型设置 · Learning Coach</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-one" aria-hidden="true"></div>
+    <div class="page-glow page-glow-two" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="返回 Learning Coach 首页">
+        <span class="brand-mark">LC</span>
+        <span><strong>Learning Coach</strong><small>模型设置</small></span>
+      </a>
+      <a class="text-link" href="/">返回学习页面</a>
+    </header>
+
+    <main class="settings-shell">
+      <section class="settings-hero" aria-labelledby="settings-title">
+        <p class="eyebrow">LOCAL MODEL CONTROL</p>
+        <h1 id="settings-title">选择模型，也守住凭据边界。</h1>
+        <p>
+          API Key 仅保存在当前服务进程内存，不写入 .env、数据库或浏览器存储；
+          服务重启后会恢复启动时配置。模型切换只影响之后创建的新会话。
+        </p>
+        <div class="current-runtime" id="current-runtime" role="status">
+          正在读取当前模型运行时…
+        </div>
+      </section>
+
+      <div class="settings-grid">
+        <section class="settings-card" aria-labelledby="api-settings-title">
+          <div class="settings-card-heading">
+            <span class="settings-number">01</span>
+            <div>
+              <h2 id="api-settings-title">模型 API</h2>
+              <p>支持当前项目已有的 OpenAI、Anthropic 与 Google GenAI。</p>
+            </div>
+          </div>
+          <form id="api-config-form">
+            <div class="model-role-grid">
+              <fieldset>
+                <legend>主模型</legend>
+                <label for="api-chat-provider">Provider</label>
+                <select id="api-chat-provider">
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="google_genai">Google GenAI</option>
+                </select>
+                <label for="api-chat-model">模型名称</label>
+                <input id="api-chat-model" type="text" value="gpt-5-mini" required />
+              </fieldset>
+              <fieldset>
+                <legend>评价模型</legend>
+                <label for="api-assessment-provider">Provider</label>
+                <select id="api-assessment-provider">
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="google_genai">Google GenAI</option>
+                </select>
+                <label for="api-assessment-model">模型名称</label>
+                <input id="api-assessment-model" type="text" value="gpt-5-mini" required />
+              </fieldset>
+            </div>
+            <div class="key-grid">
+              <label for="openai-api-key">OpenAI API Key
+                <input id="openai-api-key" type="password" autocomplete="off" />
+              </label>
+              <label for="anthropic-api-key">Anthropic API Key
+                <input id="anthropic-api-key" type="password" autocomplete="off" />
+              </label>
+              <label for="google-genai-api-key">Google GenAI API Key
+                <input id="google-genai-api-key" type="password" autocomplete="off" />
+              </label>
+            </div>
+            <p class="cost-notice">
+              测试会向所选 Provider 发起最小真实请求，可能产生少量费用；
+              测试成功后才可应用配置。
+            </p>
+            <div class="settings-actions">
+              <button class="text-button" id="test-api-config" type="submit">测试连接</button>
+              <button class="primary-button" id="apply-api-config" type="button" disabled>
+                <span>应用已测试配置</span><span aria-hidden="true">→</span>
+              </button>
+            </div>
+            <p class="form-error" id="api-config-error" role="alert"></p>
+            <p class="form-success" id="api-config-status" role="status"></p>
+          </form>
+        </section>
+
+        <section class="settings-card" aria-labelledby="cli-settings-title">
+          <div class="settings-card-heading">
+            <span class="settings-number">02</span>
+            <div>
+              <h2 id="cli-settings-title">官方 CLI 登录</h2>
+              <p>由 Codex 或 Claude 官方命令完成认证，本服务不读取令牌文件。</p>
+            </div>
+          </div>
+          <form id="cli-config-form">
+            <label for="cli-provider">选择 CLI</label>
+            <select id="cli-provider">
+              <option value="codex">Codex CLI</option>
+              <option value="claude">Claude Code</option>
+            </select>
+            <p class="cli-notice">
+              登录或退出会启动官方外部流程，并修改对应 CLI 自己的认证缓存。
+            </p>
+            <div class="settings-actions compact-actions">
+              <button class="text-button" id="cli-status" type="button">检查状态</button>
+              <button class="text-button" id="cli-login" type="button">登录</button>
+              <button class="text-button" id="cli-logout" type="button">退出</button>
+            </div>
+            <button class="primary-button wide-button" id="apply-cli-config" type="submit">
+              <span>使用这个 CLI 模型</span><span aria-hidden="true">→</span>
+            </button>
+            <p class="form-error" id="cli-config-error" role="alert"></p>
+            <p class="form-success" id="cli-config-status" role="status"></p>
+          </form>
+        </section>
+      </div>
+
+      <aside class="memory-boundary">
+        <strong>内存保存边界</strong>
+        <span>API Key 只进不出，刷新页面后输入框不会自动恢复。</span>
+        <span>服务重启会清除页面应用的 API 配置。</span>
+        <span>已经开始的学习会话继续使用创建时的模型版本。</span>
+      </aside>
+    </main>
+    <script src="/static/settings.js" defer></script>
+  </body>
+</html>

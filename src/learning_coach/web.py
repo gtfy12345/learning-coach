@@ -168,6 +168,11 @@ class ApplyModelConfigRequest(BaseModel):
         return self
 
 
+class UnconfiguredRuntimeModelConfig(BaseModel):
+    configured: Literal[False] = False
+    error: str
+
+
 class SessionView(BaseModel):
     session_id: str
     status: Literal["waiting", "completed"]
@@ -294,19 +299,24 @@ class LearningSessionService:
     def runtime_config(self) -> RuntimeModelConfigService:
         return self._runtime_config
 
-    def public_runtime_config(self) -> PublicRuntimeModelConfig:
-        return self._ensure_runtime().config
+    def public_runtime_config(
+        self,
+    ) -> PublicRuntimeModelConfig | UnconfiguredRuntimeModelConfig:
+        try:
+            return self._ensure_runtime().config
+        except (RuntimeError, ValueError):
+            return UnconfiguredRuntimeModelConfig(
+                error="尚未配置可用模型，请在本页测试并应用 API 或 CLI 模型。"
+            )
 
     def test_runtime_config(
         self, request: ApiModelConfigInput
     ) -> TestedRuntimeModelConfig:
-        self._ensure_runtime()
         return self._runtime_config.test_api_config(request)
 
     def apply_runtime_config(
         self, request: ApplyModelConfigRequest
     ) -> PublicRuntimeModelConfig:
-        self._ensure_runtime()
         if request.auth_mode == "api":
             assert request.test_id is not None
             return self._runtime_config.apply_tested(request.test_id).config
@@ -330,8 +340,7 @@ class LearningSessionService:
         except RuntimeError:
             runtime = None
         if runtime is not None:
-            self._models = runtime.models
-            self._graph = runtime.runtime
+            self._sync_runtime_metadata(runtime)
             return runtime
 
         with self._setup_lock:
@@ -356,6 +365,15 @@ class LearningSessionService:
                     assessment_model_id = (
                         assessment_model_id or settings.assessment_model_id
                     )
+                    self._advanced_chat_model_id = settings.advanced_chat_model_id
+                    self._chat_fallback_model_id = (
+                        self._chat_fallback_model_id
+                        or settings.chat_fallback_model_id
+                    )
+                    self._assessment_fallback_model_id = (
+                        self._assessment_fallback_model_id
+                        or settings.assessment_fallback_model_id
+                    )
                 auth_mode = (
                     "cli"
                     if chat_model_id.startswith(("codex_cli:", "claude_code:"))
@@ -371,9 +389,14 @@ class LearningSessionService:
                     assessment_model_id=assessment_model_id,
                     auth_mode=auth_mode,
                 )
+        self._sync_runtime_metadata(runtime)
+        return runtime
+
+    def _sync_runtime_metadata(self, runtime: RuntimeModelVersion) -> None:
         self._models = runtime.models
         self._graph = runtime.runtime
-        return runtime
+        self._chat_model_id = runtime.config.chat_model_id
+        self._assessment_model_id = runtime.config.assessment_model_id
 
     def _ensure_graph(self) -> Any:
         return self._ensure_runtime().runtime
@@ -1040,6 +1063,10 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     def home() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @application.get("/settings", include_in_schema=False)
+    def settings_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "settings.html")
+
     @application.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -1054,9 +1081,11 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
 
     @application.get(
         "/api/model-config",
-        response_model=PublicRuntimeModelConfig,
+        response_model=PublicRuntimeModelConfig | UnconfiguredRuntimeModelConfig,
     )
-    def model_config(request: Request) -> PublicRuntimeModelConfig:
+    def model_config(
+        request: Request,
+    ) -> PublicRuntimeModelConfig | UnconfiguredRuntimeModelConfig:
         _require_loopback(request)
         try:
             return session_service.public_runtime_config()

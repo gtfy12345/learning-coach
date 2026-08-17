@@ -56,6 +56,7 @@ class ApiModelConfigInput(BaseModel):
 
 
 class PublicRuntimeModelConfig(BaseModel):
+    configured: Literal[True] = True
     auth_mode: AuthMode
     chat_model_id: str
     assessment_model_id: str
