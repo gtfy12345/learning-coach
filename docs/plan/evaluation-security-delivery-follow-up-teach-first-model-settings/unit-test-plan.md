@@ -1,7 +1,7 @@
 # 先教后测与本地模型设置单元测试计划
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-17
 
 **关联 Checklist**: [unit-test-plan-checklist.md](./unit-test-plan-checklist.md)

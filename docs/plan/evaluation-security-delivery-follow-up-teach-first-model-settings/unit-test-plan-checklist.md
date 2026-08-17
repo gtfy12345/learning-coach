@@ -1,7 +1,7 @@
 # 先教后测与本地模型设置单元测试 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-17
 
 **关联测试计划**: [unit-test-plan.md](./unit-test-plan.md)
@@ -26,5 +26,5 @@
 
 ## Phase 4: 文档与回归测试
 
-- [ ] 4.1 README 与 `.env.example` 契约测试
-- [ ] 4.2 聚焦测试、全量测试与静态校验
+- [x] 4.1 README 与 `.env.example` 契约测试
+- [x] 4.2 聚焦测试、全量测试与静态校验

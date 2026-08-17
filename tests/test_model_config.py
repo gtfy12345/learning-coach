@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -136,3 +137,23 @@ def test_cli_runtime_can_be_applied_without_api_secrets() -> None:
     assert applied.config.assessment_model_id == "claude_code:default"
     assert applied.config.api_key_configured == {}
     assert factory.seen[-1][1] == {}
+
+
+def test_public_docs_explain_teach_first_and_memory_only_model_settings() -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+
+    for term in (
+        "先教学再检查",
+        "--learning-mode teach_first",
+        "--learning-mode diagnose_first",
+        "http://127.0.0.1:8000/settings",
+        "必须先测试",
+        "仅保存在当前服务进程内存",
+        "只影响之后创建的新会话",
+        ".env 不是必需",
+    ):
+        assert term in readme
+    assert "可选启动配置" in env_example
+    assert "设置页" in env_example

@@ -1,7 +1,7 @@
 # 先教后测与本地模型设置实施 Checklist
 
 > **版本**: 1.0
-> **状态**: active
+> **状态**: completed
 > **更新日期**: 2026-08-17
 
 **关联计划**: [implementation.md](./implementation.md)
@@ -26,5 +26,5 @@
 
 ## Phase 4: 文档与完整验证
 
-- [ ] 4.1 更新 README、`.env.example` 与公开边界
-- [ ] 4.2 完成全量测试与文档生命周期同步
+- [x] 4.1 更新 README、`.env.example` 与公开边界
+- [x] 4.2 完成全量测试与文档生命周期同步

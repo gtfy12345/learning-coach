@@ -42,7 +42,8 @@ class ModelSettings:
         if not chat_model_id:
             raise RuntimeError(
                 "没有找到 CHAT_MODEL_ID 或 MODEL_ID。"
-                "请复制 .env.example 为 .env，并填写可用模型。"
+                "请用 --model 启动 Web、访问本机 /settings，"
+                "或设置对应环境变量。"
             )
 
         assessment_model_id = environ.get(

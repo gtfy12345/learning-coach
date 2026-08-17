@@ -1,6 +1,6 @@
 # Learning Coach
 
-Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教练。它不在讲解之后立刻结束，而是继续诊断、出题、评价，并根据学习者的回答决定补讲还是生成小结。
+Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教练。新会话默认先教学再检查理解，随后出题、评价，并根据学习者的回答决定补讲还是生成小结；熟悉主题时也可以显式选择先诊断。
 
 这个仓库与公众号系列共用一套代码。每篇文章都会在现有项目上增加一项可以运行、可以测试的能力。
 
@@ -10,10 +10,14 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ```mermaid
 flowchart LR
-    A[输入学习主题] --> B[生成诊断题]
-    B --> C[等待诊断回答]
-    C -->|Command fan-out| D[多 Agent 讲解子图<br/>研究 · 教师 · 审查]
-    C -->|并行| P[准备练习类型与代码练习]
+    A[输入学习主题] --> M{学习模式}
+    M -->|默认 teach_first| B[基础教学]
+    B --> C[理解检查]
+    C -->|未掌握| D[多 Agent 补讲子图<br/>研究 · 教师 · 审查]
+    C -->|已掌握| P[准备练习类型与代码练习]
+    M -->|diagnose_first| X[诊断题与回答]
+    X --> D
+    D --> P
     D --> Q[生成练习题]
     P --> Q
     Q --> F[等待练习回答]
@@ -25,6 +29,8 @@ flowchart LR
 这条流程包含：
 
 - 可在浏览器完成完整学习闭环的本地 Web MVP
+- 默认“先教学再检查”，并保留可选的“先诊断再讲解”模式
+- 独立本机模型设置页：API 配置测试后应用，或选择 Codex/Claude 官方 CLI 登录
 - LangChain 模型统一接口与 Messages
 - 主模型与评价模型可使用不同 Provider
 - API Key 与官方 CLI 登录两种认证通道
@@ -87,33 +93,54 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-复制环境变量示例：
+`.env 不是必需`。Web 可以在启动后通过设置页完成首次模型配置；直接运行 CLI 时，也可以使用当前 Shell 环境变量或已经登录的官方 CLI。`.env.example` 只是可选启动配置模板。
+
+最省事的 Web 启动方式：
+
+```bash
+PYTHONPATH=src python -m learning_coach web
+```
+
+打开 [http://127.0.0.1:8000/settings](http://127.0.0.1:8000/settings)：
+
+- API 模式选择主模型和评价模型，填写实际使用的 Provider Key。配置必须先测试，测试会发起最小真实请求并可能产生少量费用；成功后才可应用。
+- CLI 模式选择 Codex 或 Claude，使用页面的状态、登录、退出按钮委托官方命令，再应用对应 CLI 模型。
+- 页面提交的 API Key 仅保存在当前服务进程内存，不写 `.env`、数据库或浏览器存储；刷新页面不回填，服务重启即清除。
+- 配置切换只影响之后创建的新会话，已经开始的会话继续使用创建时绑定的模型版本。
+
+如果更喜欢启动时配置，可以复制模板并编辑 `.env`：
 
 ```bash
 cp .env.example .env
 ```
 
-如果使用 API Key 模式，编辑 `.env`，至少填写主模型和对应密钥：
+也可以完全不创建 `.env`，直接为单次命令提供环境变量：
 
-```dotenv
-CHAT_MODEL_ID=openai:gpt-5-mini
-OPENAI_API_KEY=你的密钥
+```bash
+CHAT_MODEL_ID=openai:gpt-5-mini OPENAI_API_KEY=你的密钥 \
+PYTHONPATH=src python -m learning_coach "LangGraph Reducer"
 ```
 
-如果希望使用已经登录的官方 CLI，不需要在 `.env` 中填写对应 API Key。先登录，再把模型 ID 切到 CLI Provider：
+如果使用已经登录的官方 CLI，不需要 Provider API Key：
 
 ```bash
 PYTHONPATH=src python -m learning_coach auth login codex
+CHAT_MODEL_ID=codex_cli:default \
+PYTHONPATH=src python -m learning_coach "LangGraph Reducer"
 ```
 
-```dotenv
-CHAT_MODEL_ID=codex_cli:default
-```
-
-然后启动学习教练：
+命令行新会话默认使用 `teach_first`：
 
 ```bash
-PYTHONPATH=src python -m learning_coach "LangGraph Reducer"
+PYTHONPATH=src python -m learning_coach "LangGraph Reducer" \
+  --learning-mode teach_first
+```
+
+需要快速定位已有基础时，显式切换为旧的先诊断流程：
+
+```bash
+PYTHONPATH=src python -m learning_coach "LangGraph Reducer" \
+  --learning-mode diagnose_first
 ```
 
 可以显式说明本次希望达到的学习目标：
@@ -141,21 +168,22 @@ PYTHONPATH=src python -m learning_coach
 
 ### 启动 Web MVP
 
-Web 页面与 CLI 共用同一套 LangGraph、模型配置和认证方式。已经登录 Codex CLI 时，可以直接启动：
-
-```bash
-PYTHONPATH=src python -m learning_coach web --model codex_cli:default
-```
-
-然后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。如果已经在 `.env` 中配置模型，可以省略 `--model`：
+Web 页面与 CLI 共用同一套 LangGraph、模型配置和认证方式。可以不带模型直接启动，然后访问设置页：
 
 ```bash
 PYTHONPATH=src python -m learning_coach web
 ```
 
+然后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。已经登录 Codex CLI 时，也可以在启动参数中直接选模型：
+
+```bash
+PYTHONPATH=src python -m learning_coach web --model codex_cli:default
+```
+
 页面已经接通以下功能：
 
-- 输入学习主题并生成结构化诊断题
+- 默认先生成基础教学，再通过结构化理解检查确认掌握情况
+- 可在首页选择 `diagnose_first`，先生成结构化诊断题再针对讲解
 - 输入可选学习目标，让讲解根据掌握度和最近错误动态调整
 - 上传一张本地图片参与诊断
 - 粘贴纯文本，或上传多份论文、书籍、课件、图片与代码资料
@@ -163,7 +191,7 @@ PYTHONPATH=src python -m learning_coach web
 - 显示本次摄取的新增、更新、跳过和 Chunk 统计
 - 显示 Hybrid RAG 尝试次数、证据质量、查询改写和最终来源相关度
 - 显示 GraphRAG 概念节点、带方向关系、前置路径、补课原因和来源位置
-- 提交诊断回答，查看针对性讲解和迁移练习
+- 提交理解检查或诊断回答，查看迁移练习或针对性补讲
 - 提交练习答案，查看结构化评分、反馈和知识缺口
 - 对 Python、代码、编程、函数或算法主题生成函数练习，提交代码后运行服务端测试
 - 显示 Starter Code、测试通过数、错误类型、三级提示和安全执行说明
@@ -171,6 +199,7 @@ PYTHONPATH=src python -m learning_coach web
 - 完成后展示最终得分与学习小结
 - 通过 SSE 增量展示讲解、练习和小结，并可停止当前生成
 - 显示当前主模型、评价模型和图片能力，不向浏览器返回 API Key
+- 通过独立设置页选择 API/CLI 模型；API 配置必须测试通过后才能应用
 - 显示当前掌握度、学习摘要以及本轮模型/工具预算使用情况
 - 显示本轮练习类型与并行执行轨迹（标注并行顺序不保证）
 - 显示教学编排计划、研究焦点数、审查通过与 Agent 交接次数
@@ -179,7 +208,7 @@ PYTHONPATH=src python -m learning_coach web
 - 显示学习者长期记忆（会话次数、平均分、上次主题）
 - 完成后展示阶段报告：掌握图谱分档、轨迹检查结论、安全发现计数与下一步建议
 
-当前 Web MVP 是本地单进程应用。会话保存在内存中，服务重启后需要重新开始；尚未实现用户账号、数据库、历史记录和公网部署。
+当前 Web MVP 是本地单进程应用。模型配置接口只接受回环客户端，同源写操作只接受 JSON；API Key 只在进程内存中存在。Web 会话注册表重启后需要重新开始；尚未实现用户账号、远程模型管理和公网部署。
 
 后端接口：
 
@@ -187,6 +216,10 @@ PYTHONPATH=src python -m learning_coach web
 | --- | --- |
 | `GET /api/health` | 服务健康检查 |
 | `GET /api/config` | 返回脱敏后的主/高级/备用模型、Embedding 标识、图片能力和预算上限 |
+| `GET /api/model-config` | 返回当前运行时版本与脱敏模型配置；未配置也返回正常状态 |
+| `POST /api/model-config/test` | 对内存 API 候选执行最小真实兼容性测试并签发 5 分钟一次性票据 |
+| `PUT /api/model-config` | 应用已测试 API 候选，或切换到 Codex/Claude CLI 模型 |
+| `GET/POST /api/model-auth/{codex\|claude}/...` | 委托官方 CLI 执行状态、登录或退出 |
 | `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
@@ -440,8 +473,12 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    R[recall_memory · 召回画像] --> A[make_diagnostic]
-    A --> C1[诊断 interrupt] --> T[讲解 Swarm] --> Q[make_quiz] --> C2[练习 interrupt]
+    R[recall_memory · 召回画像] --> M{learning_mode}
+    M -->|teach_first| I[基础教学] --> U[理解检查 interrupt]
+    M -->|diagnose_first| A[诊断 interrupt]
+    U --> T[按需补讲 Swarm]
+    A --> T
+    T --> Q[make_quiz] --> C2[练习 interrupt]
     C2 --> AP{审批 interrupt<br/>仅代码练习}
     AP --> G[assess] -->|达标或用完次数| S[summarize] --> M[remember_session · 写入画像] --> E[END]
     H[get_state_history] --> L[里程碑列表] --> F[fork_session 分叉到新线程]
@@ -663,6 +700,7 @@ learning-coach/
 │       ├── memory.py
 │       ├── middleware.py
 │       ├── model.py
+│       ├── model_config.py
 │       ├── nodes.py
 │       ├── resilience.py
 │       ├── evaluation.py
@@ -673,6 +711,8 @@ learning-coach/
 │       ├── static/
 │       │   ├── app.js
 │       │   ├── index.html
+│       │   ├── settings.html
+│       │   ├── settings.js
 │       │   └── styles.css
 │       ├── state.py
 │       └── web.py
@@ -692,6 +732,8 @@ learning-coach/
     ├── test_memory.py
     ├── test_middleware.py
     ├── test_model.py
+    ├── test_model_config.py
+    ├── test_model_config_api.py
     ├── test_retrieval.py
     ├── test_resilience.py
     ├── test_routing.py
@@ -719,11 +761,12 @@ learning-coach/
 - `media.py`：把本地图片或 URL 转成跨 Provider 标准 content block。
 - `memory.py`：检查点/记忆构造器、画像召回与幂等写入、里程碑列表、快照分叉与状态比较。
 - `model.py`：创建主模型和评价模型，并协商结构化输出与图片能力。
+- `model_config.py`：管理进程内模型候选、真实测试票据、公开脱敏配置与运行时版本。
 - `auth.py`：把登录、状态和退出操作委托给官方 CLI。
 - `cli_models.py`：把 Codex、Claude Code 和 Gemini CLI 适配成现有节点可调用的模型对象。
 - `cli.py`：接收人工回答，并用 `Command` 恢复图执行。
-- `web.py`：提供本地 FastAPI 页面、多资料摄取 API、图片上传和 Graph 恢复协议。
-- `static/`：浏览器端学习界面、进度状态和交互逻辑。
+- `web.py`：提供本地 FastAPI 页面、多资料摄取、模型配置/认证 API、图片上传和 Graph 恢复协议。
+- `static/`：浏览器端学习界面、模型设置页、进度状态和交互逻辑。
 
 ## 系列路线
 
@@ -752,7 +795,7 @@ learning-coach/
 - 增量索引只存在于当前会话内存，不写入磁盘，也不能跨服务重启复用；持久化语料库和向量索引尚未实现。
 - 网页 Loader 解析静态 HTML，不执行页面 JavaScript；复杂排版、公式和受密码保护文档可能无法完整提取。
 - `InMemorySaver` 只保存当前进程中的状态。
-- Web MVP 目前只面向本机使用，没有用户账号、数据库、跨进程恢复或公网部署。
+- Web MVP 目前只面向本机使用，没有用户账号、远程配置权限模型或公网部署；页面 API Key 不持久化。
 - 评分由模型完成，不能直接等同于真实掌握程度。
 - model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
 - LCEL fallback 只在任务抛出异常时切换一次，不做负载均衡，也不会根据答案质量自动换模型。

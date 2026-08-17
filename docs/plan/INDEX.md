@@ -9,13 +9,13 @@
 
 | 计划 | 文件 | 版本 | 更新日期 |
 |------|------|------|----------|
-| [先教后测与本地模型设置 Follow-up](./evaluation-security-delivery-follow-up-teach-first-model-settings/) | [implementation](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation-checklist.md) | 1.0 | 2026-08-17 |
-| ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 
 ## 2 已完成（Completed）
 
 | 计划 | 文件 | 版本 | 完成日期 |
 |------|------|------|----------|
+| [先教后测与本地模型设置 Follow-up](./evaluation-security-delivery-follow-up-teach-first-model-settings/) | [implementation](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/implementation-checklist.md) | 1.0 | 2026-08-17 |
+| ↳ 单元测试 | [test-plan](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan.md) / [checklist](./evaluation-security-delivery-follow-up-teach-first-model-settings/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 | [Codex CLI Exec 兼容性 Follow-up](./official-cli-login-follow-up-codex-exec-compatibility/) | [implementation](./official-cli-login-follow-up-codex-exec-compatibility/implementation.md) / [checklist](./official-cli-login-follow-up-codex-exec-compatibility/implementation-checklist.md) | 1.0 | 2026-08-17 |
 | ↳ 单元测试 | [test-plan](./official-cli-login-follow-up-codex-exec-compatibility/unit-test-plan.md) / [checklist](./official-cli-login-follow-up-codex-exec-compatibility/unit-test-plan-checklist.md) | 1.0 | 2026-08-17 |
 | [收官审计契约加固 Follow-up](./evaluation-security-delivery-follow-up-contract-hardening/) | [implementation](./evaluation-security-delivery-follow-up-contract-hardening/implementation.md) / [checklist](./evaluation-security-delivery-follow-up-contract-hardening/implementation-checklist.md) | 1.0 | 2026-08-16 |
