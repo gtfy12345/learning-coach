@@ -55,6 +55,8 @@ from learning_coach.model_config import (
     RuntimeModelConfigService,
     RuntimeModelVersion,
     TestedRuntimeModelConfig,
+    env_file_has_model_config,
+    persist_env_file,
 )
 from learning_coach.memory import (
     compare_learning_states,
@@ -187,6 +189,7 @@ class ApplyModelConfigRequest(BaseModel):
     test_id: str | None = Field(default=None, max_length=64)
     chat_model_id: str | None = Field(default=None, max_length=200)
     assessment_model_id: str | None = Field(default=None, max_length=200)
+    persist_to_env: bool = False
 
     @model_validator(mode="after")
     def validate_mode_fields(self) -> "ApplyModelConfigRequest":
@@ -201,6 +204,7 @@ class ApplyModelConfigRequest(BaseModel):
 class UnconfiguredRuntimeModelConfig(BaseModel):
     configured: Literal[False] = False
     error: str
+    env_model_configured: bool = False
 
 
 class CourseChapterView(BaseModel):
@@ -310,12 +314,14 @@ class LearningSessionService:
         store: Any | None = None,
         runtime_config_service: RuntimeModelConfigService | None = None,
         auth_action: Callable[[str, str], int] = run_auth_action,
+        env_file: Path = Path(".env"),
     ) -> None:
         self._models = models
         self._models_factory = models_factory
         self._graph: Any | None = None
         self._checkpointer = checkpointer
         self._store = store
+        self._env_file = env_file
         self._chat_model_id = chat_model_id
         self._assessment_model_id = assessment_model_id
         self._advanced_chat_model_id: str | None = None
@@ -366,10 +372,20 @@ class LearningSessionService:
         self,
     ) -> PublicRuntimeModelConfig | UnconfiguredRuntimeModelConfig:
         try:
-            return self._ensure_runtime().config
+            config = self._ensure_runtime().config
+            if isinstance(config, PublicRuntimeModelConfig):
+                return config.model_copy(
+                    update={
+                        "env_model_configured": env_file_has_model_config(
+                            self._env_file
+                        )
+                    }
+                )
+            return config
         except (RuntimeError, ValueError):
             return UnconfiguredRuntimeModelConfig(
-                error="尚未配置可用模型，请在本页测试并应用 API 或 CLI 模型。"
+                error="尚未配置可用模型，请在本页测试并应用 API 或 CLI 模型。",
+                env_model_configured=env_file_has_model_config(self._env_file),
             )
 
     def test_runtime_config(
@@ -382,12 +398,23 @@ class LearningSessionService:
     ) -> PublicRuntimeModelConfig:
         if request.auth_mode == "api":
             assert request.test_id is not None
-            return self._runtime_config.apply_tested(request.test_id).config
-        assert request.chat_model_id is not None
-        return self._runtime_config.apply_cli(
-            chat_model_id=request.chat_model_id,
-            assessment_model_id=request.assessment_model_id,
-        ).config
+            applied = self._runtime_config.apply_tested(request.test_id)
+        else:
+            assert request.chat_model_id is not None
+            applied = self._runtime_config.apply_cli(
+                chat_model_id=request.chat_model_id,
+                assessment_model_id=request.assessment_model_id,
+            )
+        update: dict[str, Any] = {
+            "env_model_configured": env_file_has_model_config(self._env_file)
+        }
+        if request.persist_to_env:
+            export = self._runtime_config.take_last_env_export()
+            update["env_keys_written"] = persist_env_file(
+                self._env_file, export
+            )
+            update["env_model_configured"] = True
+        return applied.config.model_copy(update=update)
 
     def run_model_auth(self, provider: str, action: str) -> None:
         if provider not in self._auth_locks:
@@ -545,7 +572,13 @@ class LearningSessionService:
                 runtime = None
             if runtime is None:
                 if self._models is None:
-                    self._models = self._models_factory()
+                    try:
+                        self._models = self._models_factory()
+                    except Exception as exc:
+                        raise RuntimeError(
+                            str(exc).strip()
+                            or f"模型初始化失败（{type(exc).__name__}）。"
+                        ) from exc
                 graph = self._graph or build_learning_graph(
                     self._models,
                     checkpointer=self._checkpointer,

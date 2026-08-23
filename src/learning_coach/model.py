@@ -20,6 +20,64 @@ OPENAI_COMPATIBLE_PROVIDER_DEFAULTS: dict[str, str | None] = {
     "openai_compatible": None,
 }
 
+# Per-provider env names read at startup and written back by the settings
+# page when the learner opts into persisting model config to the local .env.
+PROVIDER_API_KEY_ENV: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google_genai": "GOOGLE_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "zhipu": "ZHIPU_API_KEY",
+    "openai_compatible": "OPENAI_COMPATIBLE_API_KEY",
+}
+PROVIDER_BASE_URL_ENV: dict[str, str] = {
+    provider: f"{provider.upper()}_BASE_URL"
+    for provider in OPENAI_COMPATIBLE_PROVIDER_DEFAULTS
+}
+
+
+def provider_env_credentials(
+    environ: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Read optional per-provider API keys and custom Base URLs from env."""
+
+    api_keys: dict[str, str] = {}
+    base_urls: dict[str, str] = {}
+    for provider, key_env in PROVIDER_API_KEY_ENV.items():
+        value = environ.get(key_env, "").strip()
+        if value:
+            api_keys[provider] = value
+    for provider, url_env in PROVIDER_BASE_URL_ENV.items():
+        value = environ.get(url_env, "").strip()
+        if value:
+            base_urls[provider] = value
+    return api_keys, base_urls
+
+
+def build_env_export(
+    *,
+    chat_model_id: str,
+    assessment_model_id: str,
+    api_keys: Mapping[str, str] = {},
+    api_base_urls: Mapping[str, str] = {},
+) -> dict[str, str]:
+    """Map an applied model config onto .env variable names and values."""
+
+    export: dict[str, str] = {
+        "CHAT_MODEL_ID": chat_model_id,
+        "ASSESSMENT_MODEL_ID": assessment_model_id,
+    }
+    for provider, key in sorted(api_keys.items()):
+        key_env = PROVIDER_API_KEY_ENV.get(provider)
+        if key_env and str(key).strip():
+            export[key_env] = str(key)
+    for provider, url in sorted(api_base_urls.items()):
+        url_env = PROVIDER_BASE_URL_ENV.get(provider)
+        if url_env and str(url).strip():
+            export[url_env] = str(url)
+    return export
+
 
 def _choice(value: str, *, name: str, allowed: tuple[str, ...]) -> str:
     normalized = value.strip().lower()
@@ -298,12 +356,18 @@ def create_model_suite() -> LearningCoachModels:
 
     load_dotenv()
     settings = ModelSettings.from_environ(os.environ)
-    return create_model_suite_from_settings(settings)
+    api_keys, base_urls = provider_env_credentials(os.environ)
+    return create_model_suite_from_settings(
+        settings,
+        api_keys=api_keys or None,
+        api_base_urls=base_urls or None,
+    )
 
 
 def create_model_suite_from_settings(
     settings: ModelSettings,
     api_keys: Mapping[str, str] | None = None,
+    api_base_urls: Mapping[str, str] | None = None,
 ) -> LearningCoachModels:
     """Create a suite from explicit in-memory settings without mutating env."""
 
@@ -318,8 +382,12 @@ def create_model_suite_from_settings(
             }
             if api_keys is not None:
                 kwargs["api_keys"] = api_keys
-            if settings.api_base_urls:
-                kwargs["api_base_urls"] = settings.api_base_urls
+            effective_base_urls = {
+                **(settings.api_base_urls or {}),
+                **(api_base_urls or {}),
+            }
+            if effective_base_urls:
+                kwargs["api_base_urls"] = effective_base_urls
             models_by_id[model_id] = _create_chat_model(model_id, **kwargs)
         return models_by_id[model_id]
 

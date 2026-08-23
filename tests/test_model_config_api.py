@@ -11,7 +11,7 @@ SECRET = "sk-api-route-secret"
 
 
 def make_settings_client(
-    *, client_host: str = "127.0.0.1"
+    *, client_host: str = "127.0.0.1", env_file: Any | None = None
 ) -> tuple[TestClient, list[tuple[str, str]], list[dict[str, str]]]:
     auth_calls: list[tuple[str, str]] = []
     secret_calls: list[dict[str, str]] = []
@@ -33,10 +33,16 @@ def make_settings_client(
         assessment_model_id="codex_cli:default",
         auth_mode="cli",
     )
-    service = LearningSessionService(
-        runtime_config_service=config,
-        auth_action=lambda provider, action: auth_calls.append((provider, action)) or 0,
-    )
+    service_kwargs: dict[str, Any] = {
+        "runtime_config_service": config,
+        "auth_action": lambda provider, action: auth_calls.append(
+            (provider, action)
+        )
+        or 0,
+    }
+    if env_file is not None:
+        service_kwargs["env_file"] = env_file
+    service = LearningSessionService(**service_kwargs)
     client = TestClient(
         create_app(service=service),
         base_url="http://127.0.0.1",
@@ -282,3 +288,95 @@ def test_auth_api_delegates_codex_and_claude_actions() -> None:
         ("claude", "login"),
         ("codex", "logout"),
     ]
+
+
+def test_apply_with_persist_to_env_writes_local_env_file(tmp_path) -> None:
+    from dotenv import dotenv_values
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "CHECKPOINT_DB_PATH=data/checkpoints.db\n", encoding="utf-8"
+    )
+    client, _auth_calls, _secret_calls = make_settings_client(env_file=env_file)
+    secret = "zhipu-private-secret"
+
+    tested = client.post(
+        "/api/model-config/test",
+        headers=same_origin_headers(),
+        json={
+            "chat_model_id": "zhipu:glm-5.3",
+            "assessment_model_id": "zhipu:glm-5.3",
+            "api_keys": {"zhipu": secret},
+            "base_urls": {
+                "zhipu": "https://open.bigmodel.cn/api/coding/paas/v4"
+            },
+        },
+    )
+    assert tested.status_code == 200
+
+    before = client.get("/api/model-config")
+    assert before.json()["configured"] is True
+    assert before.json()["env_model_configured"] is False
+
+    applied = client.put(
+        "/api/model-config",
+        headers=same_origin_headers(),
+        json={
+            "auth_mode": "api",
+            "test_id": tested.json()["test_id"],
+            "persist_to_env": True,
+        },
+    )
+    assert applied.status_code == 200
+    body = applied.json()
+    assert set(body["env_keys_written"]) == {
+        "CHAT_MODEL_ID",
+        "ASSESSMENT_MODEL_ID",
+        "ZHIPU_API_KEY",
+        "ZHIPU_BASE_URL",
+    }
+    assert secret not in applied.text
+
+    values = dotenv_values(env_file)
+    assert values["CHAT_MODEL_ID"] == "zhipu:glm-5.3"
+    assert values["ASSESSMENT_MODEL_ID"] == "zhipu:glm-5.3"
+    assert values["ZHIPU_API_KEY"] == secret
+    assert values["ZHIPU_BASE_URL"] == "https://open.bigmodel.cn/api/coding/paas/v4"
+    assert values["CHECKPOINT_DB_PATH"] == "data/checkpoints.db"
+    assert env_file.stat().st_mode & 0o777 == 0o600
+
+    after = client.get("/api/model-config")
+    assert after.json()["env_model_configured"] is True
+
+
+def test_apply_without_persist_flag_leaves_env_file_untouched(tmp_path) -> None:
+    from dotenv import dotenv_values
+
+    env_file = tmp_path / ".env"
+    client, _auth_calls, _secret_calls = make_settings_client(env_file=env_file)
+
+    tested = client.post(
+        "/api/model-config/test",
+        headers=same_origin_headers(),
+        json={
+            "chat_model_id": "deepseek:deepseek-v4-flash",
+            "assessment_model_id": "deepseek:deepseek-v4-flash",
+            "api_keys": {"deepseek": "deepseek-secret"},
+        },
+    )
+    assert tested.status_code == 200
+
+    applied = client.put(
+        "/api/model-config",
+        headers=same_origin_headers(),
+        json={
+            "auth_mode": "api",
+            "test_id": tested.json()["test_id"],
+            "persist_to_env": False,
+        },
+    )
+    assert applied.status_code == 200
+    assert applied.json()["env_keys_written"] == []
+    assert not env_file.exists() or not dotenv_values(env_file).get(
+        "DEEPSEEK_API_KEY"
+    )

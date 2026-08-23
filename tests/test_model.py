@@ -312,3 +312,92 @@ def test_image_policy_requires_profile_support_unless_overridden() -> None:
     assert image_inputs_enabled(unknown, "auto") is False
     assert image_inputs_enabled(unknown, "allow") is True
     assert image_inputs_enabled(capabilities(image_inputs=True), "deny") is False
+
+
+def test_provider_env_credentials_reads_per_provider_keys_and_urls() -> None:
+    from learning_coach.model import provider_env_credentials
+
+    api_keys, base_urls = provider_env_credentials(
+        {
+            "ZHIPU_API_KEY": "zhipu-secret",
+            "DASHSCOPE_BASE_URL": "https://example.com/v1",
+            "OPENAI_COMPATIBLE_API_KEY": "custom-secret",
+            "OPENAI_COMPATIBLE_BASE_URL": "https://gateway.example.com/v1",
+            "IRRELEVANT": "value",
+        }
+    )
+    assert api_keys == {
+        "zhipu": "zhipu-secret",
+        "openai_compatible": "custom-secret",
+    }
+    assert base_urls == {
+        "dashscope": "https://example.com/v1",
+        "openai_compatible": "https://gateway.example.com/v1",
+    }
+
+
+def test_build_env_export_maps_provider_values_to_env_names() -> None:
+    from learning_coach.model import build_env_export
+
+    export = build_env_export(
+        chat_model_id="zhipu:glm-5.3",
+        assessment_model_id="deepseek:deepseek-v4-flash",
+        api_keys={"zhipu": "zhipu-secret", "deepseek": "deepseek-secret"},
+        api_base_urls={"zhipu": "https://open.bigmodel.cn/api/coding/paas/v4"},
+    )
+    assert export == {
+        "CHAT_MODEL_ID": "zhipu:glm-5.3",
+        "ASSESSMENT_MODEL_ID": "deepseek:deepseek-v4-flash",
+        "ZHIPU_API_KEY": "zhipu-secret",
+        "DEEPSEEK_API_KEY": "deepseek-secret",
+        "ZHIPU_BASE_URL": "https://open.bigmodel.cn/api/coding/paas/v4",
+    }
+
+
+def test_create_model_suite_from_settings_merges_env_base_urls() -> None:
+    from learning_coach.model import (
+        ModelSettings,
+        create_model_suite_from_settings,
+    )
+
+    created: dict[str, Any] = {}
+
+    class _Recorder:
+        profile = {
+            "structured_output": True,
+            "tool_calling": True,
+            "image_inputs": False,
+        }
+
+        def __init__(self, model_id: str, **kwargs: Any) -> None:
+            self.model_id = model_id
+            self.kwargs = kwargs
+
+        def with_structured_output(self, schema: Any, method: str = "native"):
+            return self
+
+    import learning_coach.model as model_module
+
+    original = model_module._create_chat_model
+    model_module._create_chat_model = lambda model_id, **kwargs: (
+        created.setdefault(model_id, kwargs),
+        _Recorder(model_id, **kwargs),
+    )[1]
+    try:
+        suite = create_model_suite_from_settings(
+            ModelSettings(
+                chat_model_id="zhipu:glm-5.3",
+                assessment_model_id="zhipu:glm-5.3",
+            ),
+            api_keys={"zhipu": "zhipu-secret"},
+            api_base_urls={"zhipu": "https://open.bigmodel.cn/api/coding/paas/v4"},
+        )
+        assert suite is not None
+        captured = created["zhipu:glm-5.3"]
+        assert captured["api_keys"] == {"zhipu": "zhipu-secret"}
+        assert (
+            captured["api_base_urls"]["zhipu"]
+            == "https://open.bigmodel.cn/api/coding/paas/v4"
+        )
+    finally:
+        model_module._create_chat_model = original

@@ -4,8 +4,9 @@ import threading
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -15,6 +16,7 @@ from learning_coach.model import (
     LearningCoachModels,
     ModelSettings,
     OPENAI_COMPATIBLE_PROVIDER_DEFAULTS,
+    build_env_export,
     create_model_suite_from_settings,
 )
 from learning_coach.schemas import Assessment, Diagnostic
@@ -50,6 +52,40 @@ def _model_id(value: str) -> str:
 
 def model_provider(model_id: str) -> str:
     return _model_id(model_id).partition(":")[0]
+
+
+def persist_env_file(path: Path, values: Mapping[str, str]) -> list[str]:
+    """Write selected model config keys into the local .env file.
+
+    Existing lines are preserved; only the supplied keys are updated. The
+    file is created with owner-only permissions because it may hold API keys.
+    """
+
+    from dotenv import set_key
+
+    if not values:
+        return []
+    written: list[str] = []
+    for key in sorted(values):
+        set_key(str(path), key, str(values[key]))
+        written.append(key)
+    try:
+        path.touch(exist_ok=True)
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return written
+
+
+def env_file_has_model_config(path: Path) -> bool:
+    """Whether the local .env already carries a startup model selection."""
+
+    from dotenv import dotenv_values
+
+    try:
+        return bool(str(dotenv_values(path).get("CHAT_MODEL_ID", "")).strip())
+    except OSError:
+        return False
 
 
 def _compatible_base_url(value: str, *, provider: str) -> str:
@@ -112,6 +148,8 @@ class PublicRuntimeModelConfig(BaseModel):
     assessment_provider: str
     api_key_configured: dict[str, bool] = Field(default_factory=dict)
     version: int = Field(ge=1)
+    env_model_configured: bool = False
+    env_keys_written: list[str] = Field(default_factory=list)
 
 
 class TestedRuntimeModelConfig(BaseModel):
@@ -133,6 +171,7 @@ class _PendingCandidate:
     models: LearningCoachModels | Any
     runtime: Any
     config: PublicRuntimeModelConfig
+    env_export: dict[str, str] = field(default_factory=dict)
 
 
 def validate_model_suite(models: LearningCoachModels) -> None:
@@ -177,6 +216,7 @@ class RuntimeModelConfigService:
         self._max_candidates = max_candidates
         self._current: RuntimeModelVersion | None = None
         self._pending: OrderedDict[str, _PendingCandidate] = OrderedDict()
+        self._last_env_export: dict[str, str] = {}
         self._lock = threading.RLock()
 
     @property
@@ -271,6 +311,12 @@ class RuntimeModelConfigService:
                 models=models,
                 runtime=runtime,
                 config=public,
+                env_export=build_env_export(
+                    chat_model_id=chat_model_id,
+                    assessment_model_id=assessment_model_id,
+                    api_keys=api_keys,
+                    api_base_urls=dict(settings.api_base_urls or {}),
+                ),
             )
             while len(self._pending) > self._max_candidates:
                 self._pending.popitem(last=False)
@@ -295,7 +341,16 @@ class RuntimeModelConfigService:
                 models=candidate.models,
                 runtime=candidate.runtime,
             )
+            self._last_env_export = dict(candidate.env_export)
             return self._current
+
+    def take_last_env_export(self) -> dict[str, str]:
+        """Return and clear the env values captured by the last apply."""
+
+        with self._lock:
+            export = self._last_env_export
+            self._last_env_export = {}
+            return export
 
     def apply_cli(
         self,
@@ -338,6 +393,10 @@ class RuntimeModelConfigService:
                 version=version,
             )
             self._current = RuntimeModelVersion(config, models, runtime)
+            self._last_env_export = build_env_export(
+                chat_model_id=normalized_chat,
+                assessment_model_id=normalized_assessment,
+            )
             return self._current
 
     def _purge_expired(self) -> None:

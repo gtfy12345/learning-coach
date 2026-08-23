@@ -295,6 +295,8 @@ def test_settings_page_supports_quick_select_suggestions_and_ticket_countdown() 
 
     assert "toggle-visibility" in script
     assert "visibility-toggle" in styles
+    assert 'id="persist-env"' in page
+    assert "persist_to_env" in script
     assert 'input[type="url"]' in styles
     assert "isHttpsBaseUrl" in script
     assert "aria-invalid" in script

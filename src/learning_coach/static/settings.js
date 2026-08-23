@@ -435,9 +435,14 @@ applyApiButton.addEventListener("click", async () => {
   apiError.textContent = "";
   setBusy(apiForm, true);
   try {
+    const persistToEnv = document.querySelector("#persist-env").checked;
     const config = await request(
       "/api/model-config",
-      jsonOptions("PUT", { auth_mode: "api", test_id: testedConfigId }),
+      jsonOptions("PUT", {
+        auth_mode: "api",
+        test_id: testedConfigId,
+        persist_to_env: persistToEnv,
+      }),
     );
     clearTicketCountdown();
     testedConfigId = null;
@@ -446,7 +451,10 @@ applyApiButton.addEventListener("click", async () => {
     });
     renderProviderCredentials({ preserve: false });
     renderCurrent(config);
-    apiStatus.textContent = "配置已应用，只影响之后创建的新会话。";
+    const written = config.env_keys_written || [];
+    apiStatus.textContent = written.length
+      ? `配置已应用并写入本机 .env（${written.join("、")}），重启后自动加载。`
+      : "配置已应用，只影响之后创建的新会话。";
   } catch (error) {
     apiError.textContent = errorDetail(error);
   } finally {

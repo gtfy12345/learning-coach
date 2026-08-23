@@ -9,6 +9,7 @@
 | 日期 | Commit Message | 标签 |
 |------|----------------|------|
 | [2026-08-23](2026-08-23.md) | `feat(teaching): 主题要点覆盖教学与历史问题页` | #feat #ui #test #docs |
+| [2026-08-23](2026-08-23.md) | `feat(web): 设置页模型配置可选写入本机 .env` | #feat #ui #test #docs |
 | [2026-08-18](2026-08-18.md) | `feat(course): 支持整本资料拆章课程学习` | #feat #ui #test #docs |
 | [2026-08-18](2026-08-18.md) | `feat(web): 优化模型设置页交互` | #feat #ui #test |
 | [2026-08-17](2026-08-17.md) | `feat(models): 支持国产模型与优化设置页` | #feat #ui #test #docs |

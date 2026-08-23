@@ -513,6 +513,8 @@ select { cursor: pointer; }
 .history-meta { margin: 0; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
 .history-goal { margin: 8px 0 0; color: var(--teal-dark); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.persist-env-toggle { display: flex; gap: 9px; align-items: flex-start; margin: 14px 0 4px; color: var(--muted); font-size: 12px; line-height: 1.55; cursor: pointer; }
+.persist-env-toggle input { margin-top: 2px; accent-color: var(--teal); }
 .model-chips[hidden] { display: none; }
 .model-chip { padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--teal-dark); background: rgba(255,255,255,0.7); font: 750 11px/1.4 ui-monospace, monospace; cursor: pointer; transition: background 160ms ease, border-color 160ms ease, transform 160ms ease; }
 .model-chip:hover { border-color: var(--teal); background: var(--teal-soft); transform: translateY(-1px); }

@@ -116,6 +116,10 @@
               测试会向所选 Provider 发起最小真实请求，可能产生少量费用；
               测试成功后才可应用配置。
             </p>
+            <label class="persist-env-toggle" for="persist-env">
+              <input id="persist-env" type="checkbox" checked />
+              <span>同时保存到本机 .env（重启后自动加载；.gitignore 内，不进 Git）</span>
+            </label>
             <div class="settings-actions">
               <button class="text-button" id="test-api-config" type="submit">测试连接</button>
               <button class="primary-button" id="apply-api-config" type="button" disabled>
