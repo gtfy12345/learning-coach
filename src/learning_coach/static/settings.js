@@ -5,6 +5,8 @@ const apiAssessmentProvider = document.querySelector("#api-assessment-provider")
 const apiAssessmentModel = document.querySelector("#api-assessment-model");
 const chatSuggestions = document.querySelector("#chat-model-suggestions");
 const assessmentSuggestions = document.querySelector("#assessment-model-suggestions");
+const chatModelChips = document.querySelector("#chat-model-chips");
+const assessmentModelChips = document.querySelector("#assessment-model-chips");
 const applyApiButton = document.querySelector("#apply-api-config");
 const testApiButton = document.querySelector("#test-api-config");
 const apiError = document.querySelector("#api-config-error");
@@ -44,19 +46,19 @@ const PROVIDER_PRESETS = Object.freeze({
     label: "DeepSeek",
     defaultModel: "deepseek-v4-flash",
     baseUrl: "https://api.deepseek.com",
-    suggestions: ["deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+    suggestions: ["deepseek-v4-flash", "deepseek-v4-pro"],
   },
   dashscope: {
     label: "通义千问 · 阿里云百炼",
     defaultModel: "qwen-plus",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    suggestions: ["qwen-plus", "qwen-max", "qwen-turbo"],
+    suggestions: ["qwen3.8-max", "qwen3.7-plus", "qwen3.7-flash", "qwen-plus"],
   },
   zhipu: {
     label: "智谱 GLM",
     defaultModel: "glm-5-turbo",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    suggestions: ["glm-5-turbo", "glm-5"],
+    suggestions: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo"],
   },
   openai_compatible: {
     label: "自定义 OpenAI 兼容接口",
@@ -102,6 +104,30 @@ function refreshModelSuggestions(datalist, preset) {
       return option;
     }),
   );
+}
+
+function renderModelChips(container, input, provider, preset) {
+  const models = preset.suggestions || [];
+  container.replaceChildren(
+    ...models.map((model) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "model-chip";
+      chip.textContent = model;
+      chip.setAttribute("aria-pressed", String(input.value.trim() === model));
+      chip.addEventListener("click", () => {
+        input.value = model;
+        rememberModelName(provider, model);
+        invalidateApiTest();
+        container.querySelectorAll(".model-chip").forEach((element) => {
+          element.setAttribute("aria-pressed", String(element === chip));
+        });
+        input.focus();
+      });
+      return chip;
+    }),
+  );
+  container.hidden = models.length === 0;
 }
 
 function isHttpsBaseUrl(value) {
@@ -217,10 +243,11 @@ function renderProviderCredentials({ preserve = true } = {}) {
   });
 }
 
-function applyProviderPreset(providerSelect, modelInput, datalist) {
+function applyProviderPreset(providerSelect, modelInput, datalist, chips) {
   const preset = PROVIDER_PRESETS[providerSelect.value];
   modelInput.value = modelDrafts.get(providerSelect.value) || preset.defaultModel;
   refreshModelSuggestions(datalist, preset);
+  renderModelChips(chips, modelInput, providerSelect.value, preset);
   renderProviderCredentials();
   invalidateApiTest();
 }
@@ -240,7 +267,7 @@ function selectChatProvider(provider) {
     rememberModelName(lastChatProvider, apiChatModel.value);
     lastChatProvider = provider;
     apiChatProvider.value = provider;
-    applyProviderPreset(apiChatProvider, apiChatModel, chatSuggestions);
+    applyProviderPreset(apiChatProvider, apiChatModel, chatSuggestions, chatModelChips);
     syncProviderShowcase();
   }
   apiChatModel.focus();
@@ -340,13 +367,13 @@ function setBusy(form, busy) {
 apiChatProvider.addEventListener("change", () => {
   rememberModelName(lastChatProvider, apiChatModel.value);
   lastChatProvider = apiChatProvider.value;
-  applyProviderPreset(apiChatProvider, apiChatModel, chatSuggestions);
+  applyProviderPreset(apiChatProvider, apiChatModel, chatSuggestions, chatModelChips);
   syncProviderShowcase();
 });
 apiAssessmentProvider.addEventListener("change", () => {
   rememberModelName(lastAssessmentProvider, apiAssessmentModel.value);
   lastAssessmentProvider = apiAssessmentProvider.value;
-  applyProviderPreset(apiAssessmentProvider, apiAssessmentModel, assessmentSuggestions);
+  applyProviderPreset(apiAssessmentProvider, apiAssessmentModel, assessmentSuggestions, assessmentModelChips);
 });
 providerShowcaseButtons.forEach((button) => {
   button.addEventListener("click", () => selectChatProvider(button.dataset.provider));
@@ -494,4 +521,6 @@ request("/api/model-config")
 renderProviderCredentials({ preserve: false });
 refreshModelSuggestions(chatSuggestions, PROVIDER_PRESETS[apiChatProvider.value]);
 refreshModelSuggestions(assessmentSuggestions, PROVIDER_PRESETS[apiAssessmentProvider.value]);
+renderModelChips(chatModelChips, apiChatModel, apiChatProvider.value, PROVIDER_PRESETS[apiChatProvider.value]);
+renderModelChips(assessmentModelChips, apiAssessmentModel, apiAssessmentProvider.value, PROVIDER_PRESETS[apiAssessmentProvider.value]);
 syncProviderShowcase();

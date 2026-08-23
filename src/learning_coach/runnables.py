@@ -30,10 +30,13 @@ from learning_coach.schemas import (
     Diagnostic,
     GroundedTeaching,
     StudySource,
+    TopicPoints,
 )
 
 TaskInput = dict[str, Any]
-TaskName = Literal["diagnostic", "teaching", "quiz", "assessment", "summary"]
+TaskName = Literal[
+    "diagnostic", "teaching", "quiz", "assessment", "summary", "topic_points"
+]
 
 
 DIAGNOSTIC_PROMPT = ChatPromptTemplate.from_messages(
@@ -43,16 +46,32 @@ DIAGNOSTIC_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+TOPIC_POINTS_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "把学习主题拆解为 1 到 5 个必须逐一讲解覆盖的要点。"
+            "每个要点一句话、聚焦一个可教学的知识点，按教学顺序排列，不要重复。",
+        ),
+        ("user", "学习主题：{topic}"),
+    ]
+)
+
 TEACHING_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "你是技术学习教练。针对薄弱点讲解，并使用一个具体代码场景。"
+            "你是技术学习教练。讲解必须覆盖主题要点清单中的每一个要点；"
+            "已判定掌握的要点简要巩固，未掌握的要点重点讲解，并使用具体代码场景。"
             "结合本次学习目标、掌握度、最近错误和学习摘要调整讲解深度。",
         ),
         (
             "user",
             """主题：{topic}
+主题要点：
+{topic_points}
+已掌握要点：
+{mastered_points}
 诊断重点：{diagnostic_focus}
 诊断难度：{diagnostic_difficulty}
 诊断回答：{diagnostic_answer}
@@ -65,15 +84,18 @@ TEACHING_PROMPT = ChatPromptTemplate.from_messages(
 {context_summary}
 参考资料：
 {study_context}
-请控制在 300 字内，不要只重复定义。""",
+长度要求：按要点数量自适应，每个要点约 300 字；单要点主题控制在 400 字内，不要只重复定义。""",
         ),
     ]
 )
 
 QUIZ_PROMPT = ChatPromptTemplate.from_messages(
     [
-        ("system", "只出一道新的应用题，不要泄露答案。"),
-        ("user", "主题：{topic}\n刚才的讲解：{explanation}"),
+        (
+            "system",
+            "只出一道新的应用题，不要泄露答案。题目必须考察刚才讲解覆盖的要点。",
+        ),
+        ("user", "主题：{topic}\n讲解要点：\n{topic_points}\n刚才的讲解：{explanation}"),
     ]
 )
 
@@ -83,9 +105,12 @@ ASSESSMENT_PROMPT = ChatPromptTemplate.from_messages(
         (
             "user",
             """主题：{topic}
+主题要点：
+{topic_points}
 题目：{quiz_question}
 回答：{quiz_answer}
-给出 0 到 100 分、具体反馈，以及一个最主要的知识缺口。""",
+给出 0 到 100 分、具体反馈，以及一个最主要的知识缺口。
+若列出了主题要点，必须在 point_results 中对每个要点给出 mastered 与 gap；全部掌握时 gap 留空。""",
         ),
     ]
 )
@@ -143,11 +168,19 @@ def _structured_chain(
     return input_adapter | chain if input_adapter is not None else chain
 
 
+def _topic_points_input(values: TaskInput) -> TaskInput:
+    """Default the optional topic point list for quiz and assessment prompts."""
+
+    task = dict(values)
+    task["topic_points"] = format_topic_points(task.get("topic_points"))
+    return task
+
+
 def _text_chain(
     prompt: ChatPromptTemplate,
     model: Any,
 ) -> Runnable[TaskInput, str]:
-    return prompt | _as_runnable(model) | StrOutputParser()
+    return RunnableLambda(_topic_points_input) | prompt | _as_runnable(model) | StrOutputParser()
 
 
 def _teaching_query(values: TaskInput) -> str:
@@ -209,6 +242,15 @@ def _format_study_context(values: TaskInput) -> str:
     )
 
 
+def format_topic_points(points: Any) -> str:
+    """Render the bounded topic point list for prompts."""
+
+    normalized = [str(point).strip() for point in points or [] if str(point).strip()]
+    if not normalized:
+        return "未拆解要点；按主题整体讲解"
+    return "\n".join(f"{index}. {point}" for index, point in enumerate(normalized, 1))
+
+
 def _teaching_prompt_input(values: TaskInput) -> TaskInput:
     task = dict(values["task"])
     task["study_context"] = values["study_context"]
@@ -219,6 +261,11 @@ def _teaching_prompt_input(values: TaskInput) -> TaskInput:
         errors = "；".join(str(error) for error in errors) or "暂无"
     task["recent_errors"] = errors
     task.setdefault("context_summary", "暂无")
+    task["topic_points"] = format_topic_points(task.get("topic_points"))
+    task["mastered_points"] = (
+        "；".join(str(point) for point in task.get("mastered_points") or [])
+        or "暂无"
+    )
     return task
 
 
@@ -427,6 +474,7 @@ class LearningCoachRunnables:
     quiz: Runnable[TaskInput, str]
     assessment: Runnable[TaskInput, Assessment]
     summary: Runnable[TaskInput, str]
+    topic_points: Runnable[TaskInput, TopicPoints] | None = None
     teaching_engine: ContextEngineeredTeaching | None = None
 
     def teach(
@@ -470,6 +518,8 @@ class LearningCoachRunnables:
             "assessment": self.assessment,
             "summary": self.summary,
         }
+        if self.topic_points is not None:
+            tasks["topic_points"] = self.topic_points
         try:
             return tasks[name]
         except KeyError as exc:
@@ -512,13 +562,30 @@ class LearningCoachRunnables:
         )
 
         assessment_primary = _structured_chain(
-            ASSESSMENT_PROMPT, models.assessment, Assessment
+            ASSESSMENT_PROMPT,
+            models.assessment,
+            Assessment,
+            input_adapter=RunnableLambda(_topic_points_input),
         )
         assessment_fallback = (
             _structured_chain(
-                ASSESSMENT_PROMPT, models.assessment_fallback, Assessment
+                ASSESSMENT_PROMPT,
+                models.assessment_fallback,
+                Assessment,
+                input_adapter=RunnableLambda(_topic_points_input),
             )
             if models.assessment_fallback is not None
+            else None
+        )
+
+        topic_points_primary = _structured_chain(
+            TOPIC_POINTS_PROMPT, models.diagnostic, TopicPoints
+        )
+        topic_points_fallback = (
+            _structured_chain(
+                TOPIC_POINTS_PROMPT, models.diagnostic_fallback, TopicPoints
+            )
+            if models.diagnostic_fallback is not None
             else None
         )
 
@@ -553,6 +620,12 @@ class LearningCoachRunnables:
             diagnostic=_configured_task(
                 "diagnostic",
                 _with_optional_fallback(diagnostic_primary, diagnostic_fallback),
+            ),
+            topic_points=_configured_task(
+                "topic_points",
+                _with_optional_fallback(
+                    topic_points_primary, topic_points_fallback
+                ),
             ),
             teaching=teaching_task,
             quiz=_configured_task(

@@ -9,6 +9,7 @@ without touching the original session.
 
 import os
 import sqlite3
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -38,6 +39,8 @@ MAX_MILESTONES = 20
 MEMORY_NAMESPACE = "learner_memory"
 PROFILE_KEY = "profile"
 SESSION_KEY_PREFIX = "session:"
+QUESTION_NAMESPACE = "question_history"
+MAX_QUESTION_HISTORY = 50
 
 _FORKABLE_NODES = frozenset(
     {"collect_diagnostic", "collect_quiz", "approve_execution"}
@@ -118,8 +121,12 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _learner_namespace_for(namespace: str, learner_id: str) -> tuple[str, str]:
+    return (namespace, (learner_id or DEFAULT_LEARNER_ID).strip() or DEFAULT_LEARNER_ID)
+
+
 def _learner_namespace(learner_id: str) -> tuple[str, str]:
-    return (MEMORY_NAMESPACE, (learner_id or DEFAULT_LEARNER_ID).strip() or DEFAULT_LEARNER_ID)
+    return _learner_namespace_for(MEMORY_NAMESPACE, learner_id)
 
 
 def record_learning_memory(
@@ -182,6 +189,59 @@ def recall_learning_memory(store: Any, learner_id: str) -> dict[str, Any]:
         return {}
     item = store.get(_learner_namespace(learner_id), PROFILE_KEY)
     return dict(item.value) if item is not None else {}
+
+
+def record_question_history(
+    store: Any,
+    learner_id: str,
+    *,
+    topic: str,
+    learning_goal: str = "",
+    source: str = "session",
+) -> str:
+    """Record one learner-submitted question at session creation time."""
+
+    created_at = _utc_now_iso()
+    key = f"{created_at}:{time.time_ns():022d}"
+    store.put(
+        _learner_namespace_for(QUESTION_NAMESPACE, learner_id),
+        key,
+        {
+            "topic": str(topic)[:500],
+            "learning_goal": str(learning_goal)[:1_000],
+            "source": str(source)[:30],
+            "created_at": created_at,
+        },
+    )
+    return key
+
+
+def list_question_history(
+    store: Any, learner_id: str, limit: int = MAX_QUESTION_HISTORY
+) -> list[dict[str, Any]]:
+    """Return the learner's submitted questions, newest first."""
+
+    if store is None:
+        return []
+    if limit <= 0:
+        raise ValueError("limit 必须是正整数。")
+    items = store.search(
+        _learner_namespace_for(QUESTION_NAMESPACE, learner_id), limit=200
+    )
+    ordered = sorted(
+        items,
+        key=lambda item: (str(item.value.get("created_at", "")), item.key),
+        reverse=True,
+    )[:limit]
+    return [
+        {
+            "topic": str(item.value.get("topic", "")),
+            "learning_goal": str(item.value.get("learning_goal", "")),
+            "source": str(item.value.get("source", "session")),
+            "created_at": str(item.value.get("created_at", "")),
+        }
+        for item in ordered
+    ]
 
 
 def memory_summary_line(memory: Mapping[str, Any] | None) -> str:

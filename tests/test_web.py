@@ -92,6 +92,7 @@ def make_client(
     scores: tuple[int, ...] = (86,),
     run_timeout_seconds: float = 120,
     web_fetcher: SafeWebFetcher | None = None,
+    loopback: bool = False,
 ) -> tuple[TestClient, FakeChatModel]:
     model = FakeChatModel(scores)
     models = LearningCoachModels.from_models(model)
@@ -102,7 +103,13 @@ def make_client(
         run_timeout_seconds=run_timeout_seconds,
         web_fetcher=web_fetcher,
     )
-    return TestClient(create_app(service=service)), model
+    client_kwargs: dict[str, Any] = {}
+    if loopback:
+        client_kwargs = {
+            "base_url": "http://127.0.0.1",
+            "client": ("127.0.0.1", 50000),
+        }
+    return TestClient(create_app(service=service), **client_kwargs), model
 
 
 class TaggedChatModel(FakeChatModel):
@@ -270,9 +277,15 @@ def test_settings_page_supports_quick_select_suggestions_and_ticket_countdown() 
     assert 'list="chat-model-suggestions"' in page
     assert 'list="assessment-model-suggestions"' in page
     assert "<datalist" in page
+    assert 'id="chat-model-chips"' in page
+    assert 'id="assessment-model-chips"' in page
     assert "refreshModelSuggestions" in script
+    assert "renderModelChips" in script
     assert "modelDrafts" in script
-    assert "deepseek-chat" in script
+    assert "deepseek-v4-flash" in script
+    assert "deepseek-v4-pro" in script
+    assert "qwen3.8-max" in script
+    assert "glm-5.3" in script
     assert "glm-5-turbo" in script
 
     assert "startTicketCountdown" in script
@@ -286,6 +299,14 @@ def test_settings_page_supports_quick_select_suggestions_and_ticket_countdown() 
     assert "isHttpsBaseUrl" in script
     assert "aria-invalid" in script
     assert "Base URL 仅支持 HTTPS" in script
+
+
+def test_static_assets_disable_heuristic_browser_caching() -> None:
+    client, _ = make_client()
+
+    for path in ("/static/settings.js", "/static/app.js", "/static/styles.css"):
+        response = client.get(path)
+        assert response.headers["cache-control"] == "no-cache"
 
 
 def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
@@ -320,6 +341,7 @@ def test_web_session_runs_diagnosis_quiz_and_summary() -> None:
     assert second["context_report"]["model_call_limit"] == 3
     assert second["practice_kind"] == "text"
     assert {event["node"] for event in second["learning_events"]} == {
+        "break_down_topic",
         "teach",
         "prepare_practice",
     }
@@ -1246,11 +1268,13 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
 
     response = client.get("/")
 
-    assert 'id="study-material"' in response.text
     assert 'id="materials"' in response.text
     assert 'name="materials"' in response.text
     assert "multiple" in response.text
-    assert 'id="source-urls"' in response.text
+    assert 'id="study-material"' not in response.text
+    assert 'id="source-urls"' not in response.text
+    assert 'class="form-section"' in response.text
+    assert 'class="upload-grid"' in response.text
     assert 'id="context-ingestion"' in response.text
     assert 'id="context-retrieval"' in response.text
     assert 'id="concept-graph-card"' in response.text
@@ -1269,7 +1293,8 @@ def test_home_page_exposes_study_material_streaming_and_cancel_controls() -> Non
     assert 'stage === "teaching"' in app_script
     assert 'formData.append("learning_goal"' in app_script
     assert 'formData.append("materials"' in app_script
-    assert 'formData.append("source_urls"' in app_script
+    assert 'formData.append("study_material"' not in app_script
+    assert 'formData.append("source_urls"' not in app_script
     assert "source.source_name" in app_script
     assert "source.location" in app_script
     assert "ingestion_report" in app_script
@@ -1387,3 +1412,34 @@ def test_web_long_term_memory_persists_across_sessions() -> None:
     ).json()
     assert second["long_term_memory"]["sessions"] == 1
     assert second["long_term_memory"]["last_topic"] == "LangGraph 记忆"
+
+
+def test_history_page_lists_recorded_questions() -> None:
+    client, _ = make_client(loopback=True)
+
+    page = client.get("/history")
+    assert page.status_code == 200
+    assert "历史问题" in page.text
+    script = client.get("/static/history.js").text
+    assert "renderQuestions" in script
+    assert "/api/learners/" in script
+
+    started = client.post(
+        "/api/sessions",
+        data={
+            "topic": "LangGraph 条件边",
+            "learning_mode": "diagnose_first",
+        },
+    )
+    assert started.status_code == 201
+
+    response = client.get("/api/learners/local-learner/questions")
+    assert response.status_code == 200
+    questions = response.json()["questions"]
+    assert [item["topic"] for item in questions] == ["LangGraph 条件边"]
+    assert questions[0]["source"] == "diagnose_first"
+    assert questions[0]["created_at"]
+
+    empty = client.get("/api/learners/nobody/questions")
+    assert empty.status_code == 200
+    assert empty.json()["questions"] == []

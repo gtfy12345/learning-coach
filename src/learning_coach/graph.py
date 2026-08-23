@@ -68,6 +68,12 @@ def build_learning_graph(
 
     builder.add_node("recall_memory", recall_memory_node)
     builder.add_node(
+        "break_down_topic",
+        nodes.break_down_topic,
+        retry_policy=retry,
+        cache_policy=diagnostic_cache_policy,
+    )
+    builder.add_node(
         "make_diagnostic",
         nodes.make_diagnostic,
         retry_policy=retry,
@@ -115,8 +121,9 @@ def build_learning_graph(
     builder.add_node("build_stage_report", build_stage_report_node)
 
     builder.add_edge(START, "recall_memory")
+    builder.add_edge("recall_memory", "break_down_topic")
     builder.add_conditional_edges(
-        "recall_memory",
+        "break_down_topic",
         route_initial_learning,
         {
             "teach_first": "teach_initial",

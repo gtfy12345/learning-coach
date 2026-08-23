@@ -105,19 +105,21 @@ def test_default_retry_policy_is_bounded_and_transient_only() -> None:
 
 
 def test_transient_diagnostic_failure_retries_and_reaches_interrupt() -> None:
-    model = FailingFakeChatModel(diagnostic_failures=1)
+    model = FailingFakeChatModel(diagnostic_failures=2)
     graph = build_learning_graph(model, retry_policy=fast_retry_policy())
     config = {"configurable": {"thread_id": "transient-retry-session"}}
 
     result = graph.invoke({"topic": "节点重试", "attempts": 0}, config=config)
 
-    assert model.diagnostic_calls == 2
+    # One degraded topic-breakdown call, one failed diagnostic attempt,
+    # then the successful retry.
+    assert model.diagnostic_calls == 3
     assert result["__interrupt__"][0].value["kind"] == "diagnostic"
 
 
 def test_non_transient_diagnostic_failure_fails_fast() -> None:
     model = FailingFakeChatModel(
-        diagnostic_failures=1,
+        diagnostic_failures=2,
         diagnostic_error_factory=lambda: ValueError("model misconfigured"),
     )
     graph = build_learning_graph(model, retry_policy=fast_retry_policy())
@@ -125,7 +127,7 @@ def test_non_transient_diagnostic_failure_fails_fast() -> None:
 
     with pytest.raises(ValueError, match="model misconfigured"):
         graph.invoke({"topic": "节点重试", "attempts": 0}, config=config)
-    assert model.diagnostic_calls == 1
+    assert model.diagnostic_calls == 2
 
 
 def test_persistent_transient_failure_stops_at_max_attempts() -> None:
@@ -135,7 +137,7 @@ def test_persistent_transient_failure_stops_at_max_attempts() -> None:
 
     with pytest.raises(RateLimitError, match="rate limited"):
         graph.invoke({"topic": "节点重试", "attempts": 0}, config=config)
-    assert model.diagnostic_calls == 2
+    assert model.diagnostic_calls == 3
 
 
 def test_node_cache_enabled_parses_environment_switch() -> None:
@@ -203,7 +205,8 @@ def test_second_session_with_same_topic_reuses_cached_diagnostic() -> None:
         config={"configurable": {"thread_id": "cache-second"}},
     )
 
-    assert model.diagnostic_calls == 1
+    # One topic-breakdown call plus one cached diagnostic call.
+    assert model.diagnostic_calls == 2
     assert first["diagnostic_question"] == second["diagnostic_question"]
     assert second["__interrupt__"][0].value["kind"] == "diagnostic"
 
@@ -221,7 +224,7 @@ def test_node_cache_disabled_regenerates_diagnostic() -> None:
         config={"configurable": {"thread_id": "nocache-second"}},
     )
 
-    assert model.diagnostic_calls == 2
+    assert model.diagnostic_calls == 4
 
 
 def test_different_topics_do_not_share_diagnostic_cache() -> None:
@@ -237,7 +240,7 @@ def test_different_topics_do_not_share_diagnostic_cache() -> None:
         config={"configurable": {"thread_id": "cache-topic-b"}},
     )
 
-    assert model.diagnostic_calls == 2
+    assert model.diagnostic_calls == 4
 
 
 def test_different_images_do_not_share_diagnostic_cache() -> None:
@@ -265,7 +268,7 @@ def test_different_images_do_not_share_diagnostic_cache() -> None:
         config={"configurable": {"thread_id": "cache-image-b"}},
     )
 
-    assert model.diagnostic_calls == 2
+    assert model.diagnostic_calls == 4
 
 
 def test_public_docs_describe_advanced_state_runtime_contract() -> None:

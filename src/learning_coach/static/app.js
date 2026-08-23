@@ -6,10 +6,8 @@ const topicInput = document.querySelector("#topic");
 const learningGoalInput = document.querySelector("#learning-goal");
 const learningModeInput = document.querySelector("#learning-mode");
 const imageInput = document.querySelector("#image");
-const studyMaterialInput = document.querySelector("#study-material");
 const materialsInput = document.querySelector("#materials");
 const materialsTitle = document.querySelector("#materials-title");
-const sourceUrlsInput = document.querySelector("#source-urls");
 const uploadTitle = document.querySelector("#upload-title");
 const setupError = document.querySelector("#setup-error");
 const answerInput = document.querySelector("#answer");
@@ -471,14 +469,8 @@ startForm.addEventListener("submit", async (event) => {
     formData.append("learner_id", learnerIdInput.value);
   }
   if (imageInput.files[0]) formData.append("image", imageInput.files[0]);
-  if (studyMaterialInput.value.trim()) {
-    formData.append("study_material", studyMaterialInput.value);
-  }
   for (const material of materialsInput.files) {
     formData.append("materials", material);
-  }
-  if (sourceUrlsInput.value.trim()) {
-    formData.append("source_urls", sourceUrlsInput.value);
   }
   activeController = new AbortController();
   cancelStartButton.hidden = false;

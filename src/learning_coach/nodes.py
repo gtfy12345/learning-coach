@@ -1,4 +1,5 @@
 from typing import Any, Literal
+from collections.abc import Mapping
 
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
@@ -85,6 +86,20 @@ def route_initial_learning(
     return learning_mode_for_state(state)
 
 
+def mastered_points_from_assessment(
+    state: Mapping[str, Any], assessment: Assessment
+) -> list[str]:
+    """Project per-point verdicts onto the session's topic point list."""
+
+    points = [str(point).strip() for point in state.get("topic_points", [])]
+    if not points or not assessment.point_results:
+        return []
+    mastered = {
+        result.point.strip() for result in assessment.point_results if result.mastered
+    }
+    return [point for point in points if point in mastered]
+
+
 class LearningCoachNodes:
     """Nodes that perform one learning task and return partial state updates."""
 
@@ -106,6 +121,45 @@ class LearningCoachNodes:
         self.code_practice = BoundedCodePracticeAgent(
             CodePracticeToolRegistry(generator=generator, runner=executor.run)
         )
+
+    def break_down_topic(
+        self,
+        state: LearningState,
+        runtime: Runtime[LearningRuntimeContext] | LearningRuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        """Split the topic into bounded teachable points before teaching.
+
+        Any breakdown failure degrades to the whole topic as a single point,
+        so the session always continues with a deterministic point list.
+        """
+
+        del runtime
+        topic = str(state["topic"])
+        try:
+            if self.runnables.topic_points is None:
+                raise RuntimeError("topic_points 任务未配置")
+            breakdown = self.runnables.topic_points.invoke({"topic": topic})
+            points = [str(point).strip() for point in breakdown.points if str(point).strip()]
+        except Exception as exc:
+            points = []
+            self._write_event(
+                {
+                    "event": "topic_breakdown",
+                    "stage": "degraded",
+                    "reason": f"{type(exc).__name__}",
+                }
+            )
+        if not points:
+            points = [topic[:120]]
+        detail = f"主题拆解为 {len(points)} 个要点"
+        return {
+            "topic_points": points,
+            "learning_events": [
+                LearningEvent(
+                    node="break_down_topic", detail=detail
+                ).model_dump(mode="json")
+            ],
+        }
 
     def make_diagnostic(self, state: LearningState) -> dict[str, Any]:
         """Generate the diagnostic question from the topic and images only.
@@ -139,6 +193,8 @@ class LearningCoachNodes:
         self._write_status("teaching", "started")
         task_input: dict[str, Any] = {
             "topic": state["topic"],
+            "topic_points": list(state.get("topic_points", [])),
+            "mastered_points": list(state.get("mastered_points", [])),
             "diagnostic_focus": "先建立核心概念",
             "diagnostic_difficulty": "foundation",
             "diagnostic_answer": "尚未进行理解检查",
@@ -260,6 +316,7 @@ class LearningCoachNodes:
         assessment = self.runnables.assessment.invoke(
             {
                 "topic": state["topic"],
+                "topic_points": list(state.get("topic_points", [])),
                 "quiz_question": state["diagnostic_question"],
                 "quiz_answer": state["diagnostic_answer"],
             }
@@ -285,6 +342,9 @@ class LearningCoachNodes:
             "mastery_level": assessment.score,
             "feedback": assessment.feedback,
             "missing_point": assessment.missing_point,
+            "mastered_points": mastered_points_from_assessment(
+                state, assessment
+            ),
             "recent_errors": error_delta,
             "context_summary": build_context_summary(progress, learning_runtime),
             "attempts": 0,
@@ -431,6 +491,7 @@ class LearningCoachNodes:
         parts = self.runnables.quiz.stream(
             {
                 "topic": state["topic"],
+                "topic_points": list(state.get("topic_points", [])),
                 "explanation": state["explanation"],
             }
         )
@@ -575,6 +636,7 @@ class LearningCoachNodes:
             assessment = self.runnables.assessment.invoke(
                 {
                     "topic": state["topic"],
+                    "topic_points": list(state.get("topic_points", [])),
                     "quiz_question": state["quiz_question"],
                     "quiz_answer": state["quiz_answer"],
                 }
@@ -597,6 +659,9 @@ class LearningCoachNodes:
             "mastery_level": assessment.score,
             "feedback": assessment.feedback,
             "missing_point": assessment.missing_point,
+            "mastered_points": mastered_points_from_assessment(
+                state, assessment
+            ),
             "recent_errors": error_delta,
             "context_summary": build_context_summary(
                 progress, learning_runtime

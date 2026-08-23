@@ -8,7 +8,7 @@
       content="会诊断、讲解、出题、评价并补救的本地 AI 学习教练"
     />
     <title>Learning Coach · AI 学习教练</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=2" />
   </head>
   <body>
     <div class="page-glow page-glow-one" aria-hidden="true"></div>
@@ -23,6 +23,10 @@
         </span>
       </a>
       <div class="header-actions">
+        <a class="settings-nav-link" href="/history" aria-label="查看历史学习问题">
+          <span class="settings-nav-icon" aria-hidden="true">⏱</span>
+          <span>历史问题</span>
+        </a>
         <a class="settings-nav-link" href="/settings" aria-label="打开模型与连接设置">
           <span class="settings-nav-icon" aria-hidden="true">⌘</span>
           <span>模型与连接</span>
@@ -40,9 +44,9 @@
           <div class="eyebrow"><span>02.5</span> WEB MVP</div>
           <h1 id="page-title">先把关键概念讲清楚，<br />再看看你是否真正掌握。</h1>
           <p class="hero-copy">
-            输入一个学习主题。教练默认先教学再检查理解，随后用迁移练习评价；
-            你也可以切换为先诊断，快速定位已有基础和知识缺口。
-            想系统读完一份资料时，切换到「资料课程」，整本书自动拆成章节，逐章讲解出题。
+            输入主题，教练先讲解、再检查理解、然后出题验证；
+            熟悉的主题也可以切换为先诊断。想系统读完一份资料，
+            用「资料课程」整本拆章学习。
           </p>
 
           <div class="entry-tabs" role="tablist" aria-label="学习入口">
@@ -75,98 +79,81 @@
               </button>
             </div>
 
-            <label class="material-box" for="learning-mode">
-              <span>
-                <strong>选择学习方式</strong>
-                <small>默认先讲解再检查；熟悉主题时可先诊断</small>
-              </span>
-              <select id="learning-mode" name="learning_mode">
-                <option value="teach_first" selected>先教学再检查（推荐）</option>
-                <option value="diagnose_first">先诊断再针对讲解</option>
-              </select>
-            </label>
-
-            <label class="material-box" for="learning-goal">
-              <span>
-                <strong>这次希望学到什么程度？</strong>
-                <small>可选 · 教练会据此动态调整讲解深度、工具和模型</small>
-              </span>
-              <input
-                id="learning-goal"
-                name="learning_goal"
-                type="text"
-                maxlength="1000"
-                placeholder="例如：能够独立实现一个有终止条件的补救流程"
-              />
-            </label>
-
-            <label class="material-box" for="learner-id">
-              <span>
-                <strong>学习者标识</strong>
-                <small>可选 · 相同标识跨会话累计长期记忆与平均分</small>
-              </span>
-              <input
-                id="learner-id"
-                name="learner_id"
-                type="text"
-                maxlength="100"
-                placeholder="默认 local-learner"
-              />
-            </label>
-
-            <label class="upload-box" for="image">
-              <span class="upload-icon" aria-hidden="true">＋</span>
-              <span>
-                <strong id="upload-title">附一张题目或流程图</strong>
-                <small>PNG、JPEG、GIF、WebP · 最大 10 MiB</small>
-              </span>
-              <input
-                id="image"
-                name="image"
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-              />
-            </label>
-            <label class="material-box" for="study-material">
-              <span>
-                <strong>粘贴可选学习资料</strong>
-                <small>纯文本 · 最多 50,000 字 · 仅保存在当前内存会话</small>
-              </span>
-              <textarea
-                id="study-material"
-                name="study_material"
-                rows="5"
-                maxlength="50000"
-                placeholder="例如课程笔记、技术说明或代码概念。讲解阶段会检索相关片段并显示来源。"
-              ></textarea>
-            </label>
-            <label class="upload-box" for="materials">
-              <span class="upload-icon" aria-hidden="true">＋</span>
-              <span>
-                <strong id="materials-title">上传论文、书籍、课件、图片或代码</strong>
-                <small>PDF、DOCX、PPTX、EPUB、HTML、文本、图片与代码 · 最多 10 个</small>
-              </span>
-              <input
-                id="materials"
-                name="materials"
-                type="file"
-                multiple
-                accept=".pdf,.docx,.pptx,.epub,.html,.htm,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cc,.cpp,.h,.hpp,.cs,.rb,.php,.sh,.sql,.yaml,.yml,.json,.toml,.xml,.css"
-              />
-            </label>
-            <label class="material-box" for="source-urls">
-              <span>
-                <strong>添加课程网页</strong>
-                <small>可选 · 每行一个 http/https URL · 不递归抓取链接</small>
-              </span>
-              <textarea
-                id="source-urls"
-                name="source_urls"
-                rows="3"
-                maxlength="10000"
-                placeholder="https://docs.example.com/course/lesson-1"
-              ></textarea>
-            </label>
+            <div class="form-section">
+              <div class="form-section-title">
+                <strong>学习设置</strong><small>都可以保持默认</small>
+              </div>
+              <label class="material-box" for="learning-mode">
+                <span>
+                  <strong>选择学习方式</strong>
+                  <small>默认先讲解再检查；熟悉主题时可先诊断</small>
+                </span>
+                <select id="learning-mode" name="learning_mode">
+                  <option value="teach_first" selected>先教学再检查（推荐）</option>
+                  <option value="diagnose_first">先诊断再针对讲解</option>
+                </select>
+              </label>
+              <label class="material-box" for="learning-goal">
+                <span>
+                  <strong>这次希望学到什么程度？</strong>
+                  <small>可选 · 教练会据此动态调整讲解深度、工具和模型</small>
+                </span>
+                <input
+                  id="learning-goal"
+                  name="learning_goal"
+                  type="text"
+                  maxlength="1000"
+                  placeholder="例如：能够独立实现一个有终止条件的补救流程"
+                />
+              </label>
+              <label class="material-box" for="learner-id">
+                <span>
+                  <strong>学习者标识</strong>
+                  <small>可选 · 相同标识跨会话累计长期记忆与平均分</small>
+                </span>
+                <input
+                  id="learner-id"
+                  name="learner_id"
+                  type="text"
+                  maxlength="100"
+                  placeholder="默认 local-learner"
+                />
+              </label>
+            </div>
+            <div class="form-section">
+              <div class="form-section-title">
+                <strong>参考资料</strong><small>可选 · 讲解会引用并标注出处</small>
+              </div>
+              <div class="upload-grid">
+                <label class="upload-box" for="image">
+                  <span class="upload-icon" aria-hidden="true">＋</span>
+                  <span>
+                    <strong id="upload-title">附一张题目或流程图</strong>
+                    <small>PNG、JPEG、GIF、WebP · 最大 10 MiB</small>
+                  </span>
+                  <input
+                    id="image"
+                    name="image"
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                  />
+                </label>
+                <label class="upload-box" for="materials">
+                  <span class="upload-icon" aria-hidden="true">＋</span>
+                  <span>
+                    <strong id="materials-title">上传论文、书籍、课件、图片或代码</strong>
+                    <small>PDF、DOCX、PPTX、EPUB、图片与代码 · 最多 10 个</small>
+                  </span>
+                  <input
+                    id="materials"
+                    name="materials"
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx,.pptx,.epub,.html,.htm,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cc,.cpp,.h,.hpp,.cs,.rb,.php,.sh,.sql,.yaml,.yml,.json,.toml,.xml,.css"
+                  />
+                </label>
+              </div>
+            </div>
             <p class="form-error" id="setup-error" role="alert"></p>
           </form>
           </div>
@@ -368,6 +355,6 @@
       </article>
     </template>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=2" defer></script>
   </body>
 </html>

@@ -518,6 +518,8 @@ class TeachingSwarm:
             feedback = _bounded_text(f"{feedback} 审查意见：{hints}", 2_000)
         task_input: dict[str, Any] = {
             "topic": state["topic"],
+            "topic_points": list(state.get("topic_points", [])),
+            "mastered_points": list(state.get("mastered_points", [])),
             "diagnostic_focus": state.get("diagnostic_focus", "暂无"),
             "diagnostic_difficulty": state.get("diagnostic_difficulty", "暂无"),
             "diagnostic_answer": state.get("diagnostic_answer", "暂无"),

@@ -71,7 +71,9 @@ def test_dynamic_prompt_contains_goal_mastery_errors_and_budget() -> None:
     assert "遗漏 attempts 上限" in prompt
     assert "最多 4 次模型调用" in prompt
     assert "最多 2 次工具调用" in prompt
-    assert "300 字内" in prompt
+    assert "主题要点：未拆解要点；按主题整体讲解" in prompt
+    assert "覆盖主题要点清单中的每一个要点" in prompt
+    assert "不超过 400 字（按要点数量自适应）" in prompt
 
 
 def test_tools_are_selected_from_material_progress_and_budget() -> None:

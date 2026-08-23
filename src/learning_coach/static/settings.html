@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Learning Coach 本机模型设置" />
     <title>模型设置 · Learning Coach</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=2" />
   </head>
   <body>
     <div class="page-glow page-glow-one" aria-hidden="true"></div>
@@ -15,6 +15,7 @@
         <span class="brand-mark">LC</span>
         <span><strong>Learning Coach</strong><small>模型设置</small></span>
       </a>
+      <a class="text-link" href="/history">历史问题</a>
       <a class="text-link" href="/">返回学习页面</a>
     </header>
 
@@ -80,6 +81,7 @@
                 </select>
                 <label for="api-chat-model">模型名称</label>
                 <input id="api-chat-model" type="text" value="gpt-5-mini" list="chat-model-suggestions" required />
+                <div id="chat-model-chips" class="model-chips" aria-label="推荐模型，点击填入"></div>
               </fieldset>
               <fieldset>
                 <legend>评价模型</legend>
@@ -95,6 +97,7 @@
                 </select>
                 <label for="api-assessment-model">模型名称</label>
                 <input id="api-assessment-model" type="text" value="gpt-5-mini" list="assessment-model-suggestions" required />
+                <div id="assessment-model-chips" class="model-chips" aria-label="推荐模型，点击填入"></div>
               </fieldset>
             </div>
             <datalist id="chat-model-suggestions"></datalist>
@@ -162,6 +165,6 @@
         <span>已经开始的学习会话继续使用创建时的模型版本。</span>
       </aside>
     </main>
-    <script src="/static/settings.js" defer></script>
+    <script src="/static/settings.js?v=2" defer></script>
   </body>
 </html>

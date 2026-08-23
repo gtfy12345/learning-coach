@@ -537,7 +537,7 @@ def test_graph_runs_teach_and_prepare_practice_in_parallel() -> None:
     assert result["__interrupt__"][0].value["kind"] == "quiz"
     assert result["practice_kind"] == "text"
     event_nodes = {event["node"] for event in result["learning_events"]}
-    assert event_nodes == {"teach", "prepare_practice"}
+    assert event_nodes == {"break_down_topic", "teach", "prepare_practice"}
     for event in result["learning_events"]:
         assert event["status"] == "completed"
         assert event["detail"]

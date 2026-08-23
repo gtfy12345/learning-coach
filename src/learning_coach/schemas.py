@@ -13,12 +13,49 @@ class Diagnostic(BaseModel):
     )
 
 
+class TopicPoints(BaseModel):
+    """A bounded breakdown of the learning topic into teachable points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    points: list[str] = Field(
+        min_length=1,
+        max_length=5,
+        description="主题拆解出的必须讲解覆盖的要点，按教学顺序排列",
+    )
+
+    @model_validator(mode="after")
+    def validate_points(self) -> "TopicPoints":
+        normalized = [point.strip()[:120] for point in self.points]
+        if any(not point for point in normalized):
+            raise ValueError("要点不能为空白。")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("要点不能重复。")
+        self.points = normalized
+        return self
+
+
+class PointAssessment(BaseModel):
+    """One topic point with its mastery verdict from an assessment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    point: str = Field(min_length=1, max_length=120)
+    mastered: bool
+    gap: str = Field(default="", max_length=200)
+
+
 class Assessment(BaseModel):
     """A machine-readable evaluation used by the graph router."""
 
     score: int = Field(ge=0, le=100, description="回答得分，范围为 0 到 100")
     feedback: str = Field(description="具体、可执行的反馈")
     missing_point: str = Field(description="最主要的知识缺口；没有时写明已经掌握")
+    point_results: list[PointAssessment] = Field(
+        default_factory=list,
+        max_length=5,
+        description="按主题要点逐项判定的掌握结果；未拆解要点时为空",
+    )
 
 
 CodeDifficulty = Literal["foundation", "application", "advanced"]
@@ -147,6 +184,7 @@ class LearningEvent(BaseModel):
     node: Literal[
         "teach",
         "teach_initial",
+        "break_down_topic",
         "prepare_practice",
         "assess",
         "assess_understanding",

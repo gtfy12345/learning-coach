@@ -85,6 +85,8 @@ class LearningState(TypedDict, total=False):
     """The explicit state shared by every node in the learning workflow."""
 
     topic: str
+    topic_points: list[str]
+    mastered_points: list[str]
     learning_mode: LearningMode
     initial_lesson: str
     understanding_check: dict[str, Any]

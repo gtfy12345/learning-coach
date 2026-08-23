@@ -131,13 +131,18 @@ def teaching_system_prompt(runtime: TeachingAgentRuntime) -> str:
     context = runtime.teaching
     errors = "；".join(context.recent_errors) or "暂无已确认错误"
     tools = "、".join(context.available_tools) or "无工具；直接完成讲解"
-    return f"""你是技术学习教练。请围绕学习目标和薄弱点完成一次针对性讲解。
+    points = "；".join(context.topic_points) or "未拆解要点；按主题整体讲解"
+    mastered = "；".join(context.mastered_points) or "暂无"
+    coverage_budget = 400 * max(1, len(context.topic_points))
+    return f"""你是技术学习教练。讲解必须覆盖主题要点清单中的每一个要点；已判定掌握的要点简要巩固，未掌握的要点重点讲解并使用具体代码场景。
 学习目标：{context.learning_goal}
+主题要点：{points}
+已掌握要点：{mastered}
 当前掌握度：{context.mastery_level}/100，层级：{context.mastery_band}
 最近错误：{errors}
 可用工具：{tools}
 运行预算：最多 {context.model_call_limit} 次模型调用，最多 {context.tool_call_limit} 次工具调用。
-仅在确有必要时调用工具；不得重复检索相同问题。最终讲解控制在 300 字内，使用一个具体代码场景，不要只重复定义，也不要声称使用了未调用的工具。"""
+仅在确有必要时调用工具；不得重复检索相同问题。最终讲解总长度不超过 {coverage_budget} 字（按要点数量自适应），不要只重复定义，也不要声称使用了未调用的工具。"""
 
 
 def _runtime(request: ModelRequest[Any]) -> TeachingAgentRuntime:

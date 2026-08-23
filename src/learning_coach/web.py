@@ -61,7 +61,9 @@ from learning_coach.memory import (
     create_checkpointer,
     create_memory_store,
     fork_session,
+    list_question_history,
     list_session_checkpoints,
+    record_question_history,
 )
 from learning_coach.retrieval import normalize_study_material
 from learning_coach.schemas import (
@@ -95,6 +97,15 @@ from learning_coach.state import (
 STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_WEB_RUN_TIMEOUT_SECONDS = 120.0
 MAX_COURSE_CORPORA = 3
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """本地静态资源禁止启发式缓存，改动后普通刷新即可生效。"""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> FileResponse:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _now_iso() -> str:
@@ -698,7 +709,26 @@ class LearningSessionService:
             initial_state["ingestion_report"] = ingestion.report.model_dump()
         if image_blocks:
             initial_state["diagnostic_images"] = list(image_blocks)
+        self._record_question_history(initial_state)
         return initial_state
+
+    def _record_question_history(self, initial_state: dict[str, Any]) -> None:
+        try:
+            record_question_history(
+                self._store,
+                str(initial_state.get("learner_id") or "local-learner"),
+                topic=str(initial_state.get("topic", "")),
+                learning_goal=str(initial_state.get("learning_goal", "")),
+                source=str(initial_state.get("learning_mode", "teach_first")),
+            )
+        except Exception:
+            # 历史记录是旁路能力：存储异常不得阻断学习会话创建。
+            pass
+
+    def question_history(
+        self, learner_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        return list_question_history(self._store, self._normalized_learner(learner_id), limit)
 
     def create_session(
         self,
@@ -1288,7 +1318,7 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
         version="0.1.0",
     )
     application.state.session_service = session_service
-    application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    application.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
     @application.get("/", include_in_schema=False)
     def home() -> FileResponse:
@@ -1297,6 +1327,26 @@ def create_app(*, service: LearningSessionService | None = None) -> FastAPI:
     @application.get("/settings", include_in_schema=False)
     def settings_page() -> FileResponse:
         return FileResponse(STATIC_DIR / "settings.html")
+
+    @application.get("/history", include_in_schema=False)
+    def history_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "history.html")
+
+    @application.get(
+        "/api/learners/{learner_id}/questions",
+    )
+    def learner_question_history(
+        learner_id: str,
+        request: Request,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        _require_loopback(request)
+        bounded_limit = max(1, min(limit, 100))
+        return {
+            "questions": session_service.question_history(
+                learner_id, bounded_limit
+            ),
+        }
 
     @application.get("/api/health")
     def health() -> dict[str, str]:

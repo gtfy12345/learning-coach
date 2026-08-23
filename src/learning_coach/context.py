@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
@@ -119,6 +119,8 @@ class TeachingContext:
     prefer_advanced_model: bool
     model_call_limit: int
     tool_call_limit: int
+    topic_points: list[str] = field(default_factory=list)
+    mastered_points: list[str] = field(default_factory=list)
 
 
 _NO_ERROR_MARKERS = {"", "暂无", "无", "没有", "已经掌握", "已掌握"}
@@ -232,6 +234,16 @@ def build_teaching_context(
         prefer_advanced_model=mastery < 60 or len(errors) >= 2,
         model_call_limit=runtime.model_call_limit,
         tool_call_limit=runtime.tool_call_limit,
+        topic_points=[
+            str(point)[:120]
+            for point in (values.get("topic_points") or [])
+            if str(point).strip()
+        ][:5],
+        mastered_points=[
+            str(point)[:120]
+            for point in (values.get("mastered_points") or [])
+            if str(point).strip()
+        ][:5],
     )
 
 

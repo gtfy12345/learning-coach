@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Learning Coach 历史学习问题" />
+    <title>历史问题 · Learning Coach</title>
+    <link rel="stylesheet" href="/static/styles.css?v=2" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-one" aria-hidden="true"></div>
+    <div class="page-glow page-glow-two" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="返回 Learning Coach 首页">
+        <span class="brand-mark">LC</span>
+        <span><strong>Learning Coach</strong><small>历史问题</small></span>
+      </a>
+      <a class="text-link" href="/">返回学习页面</a>
+    </header>
+
+    <main class="settings-shell">
+      <section class="settings-hero" aria-labelledby="history-title">
+        <div class="settings-hero-copy">
+          <p class="eyebrow">QUESTION HISTORY</p>
+          <h1 id="history-title">提过的每个问题，都在这里。</h1>
+          <p>
+            每次创建学习会话时，提交的学习主题会按学习者标识记录到长期记忆
+            Store；配置 SQLite 后跨重启保留。页面只展示主题与学习目标，
+            不包含回答、讲解正文或资料内容。
+          </p>
+        </div>
+        <div class="current-runtime" id="history-status" role="status">
+          <span class="runtime-beacon" aria-hidden="true"></span>
+          <span class="runtime-copy">
+            <small>学习者标识</small>
+            <strong id="history-learner">local-learner</strong>
+            <span id="history-count">正在读取历史问题…</span>
+          </span>
+        </div>
+      </section>
+
+      <section aria-label="历史问题列表">
+        <div class="history-filter">
+          <label for="history-learner-input">学习者标识</label>
+          <input
+            id="history-learner-input"
+            type="text"
+            maxlength="100"
+            placeholder="默认 local-learner"
+          />
+          <button type="button" id="history-refresh" class="history-refresh">
+            查询
+          </button>
+        </div>
+        <p class="form-error" id="history-error" role="alert"></p>
+        <div id="history-list" class="history-list" aria-live="polite"></div>
+      </section>
+    </main>
+    <script src="/static/history.js?v=2" defer></script>
+  </body>
+</html>

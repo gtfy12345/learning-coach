@@ -8,7 +8,7 @@ from langchain_core.runnables.base import Runnable
 from learning_coach.model import LearningCoachModels
 from learning_coach.context import LearningRuntimeContext
 from learning_coach.runnables import LearningCoachRunnables
-from learning_coach.schemas import Assessment, Diagnostic, GroundedTeaching
+from learning_coach.schemas import Assessment, Diagnostic, GroundedTeaching, TopicPoints
 
 
 def _messages(value: Any) -> list[Any]:
@@ -33,6 +33,8 @@ class FakeStructuredModel:
                 focus="Reducer 合并语义",
                 difficulty="application",
             )
+        if self.schema is TopicPoints:
+            return TopicPoints(points=["Reducer 合并语义", "Annotated 类型约束"])
         self.owner.assessment_messages = messages
         return Assessment(
             score=88,
@@ -57,7 +59,7 @@ class FakeChatModel:
         messages = _messages(value)
         self.text_messages.append(messages)
         system = str(messages[0].content)
-        if "针对薄弱点讲解" in system:
+        if "覆盖主题要点清单" in system or "针对薄弱点讲解" in system:
             return AIMessage(content="Reducer 决定并行更新如何合并。")
         if "新的应用题" in system:
             return AIMessage(content="请设计一个需要列表合并的 State。")

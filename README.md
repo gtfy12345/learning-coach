@@ -10,8 +10,9 @@ Learning Coach 是一个用 LangChain 和 LangGraph 构建的开源 AI 学习教
 
 ```mermaid
 flowchart LR
-    A[输入学习主题] --> M{学习模式}
-    M -->|默认 teach_first| B[基础教学]
+    A[输入学习主题] --> S[主题要点拆解]
+    S --> M{学习模式}
+    M -->|默认 teach_first| B[基础教学<br/>逐要点覆盖]
     B --> C[理解检查]
     C -->|未掌握| D[多 Agent 补讲子图<br/>研究 · 教师 · 审查]
     C -->|已掌握| P[准备练习类型与代码练习]
@@ -30,7 +31,7 @@ flowchart LR
 
 - 可在浏览器完成完整学习闭环的本地 Web MVP
 - 首页双入口：「主题学习」沿用先教后测流程；「资料课程」把整本书按真实结构拆成章节，逐章讲解出题并累计进度
-- 默认“先教学再检查”，并保留可选的“先诊断再讲解”模式
+- 默认“先教学再检查”，并保留可选的“先诊断再讲解”模式；两种模式开始前都会把主题拆解为要点清单，讲解按要点覆盖、评价按要点判定
 - 独立本机模型设置页：支持 OpenAI、Anthropic、Google、DeepSeek、通义千问、智谱 GLM 与自定义 OpenAI 兼容接口，API 配置测试后应用，也可选择 Codex/Claude 官方 CLI 登录
 - LangChain 模型统一接口与 Messages
 - 主模型与评价模型可使用不同 Provider
@@ -185,13 +186,15 @@ PYTHONPATH=src python -m learning_coach web --model codex_cli:default
 
 页面已经接通以下功能：
 
+- 会话开始先把学习主题拆解为 1-5 个要点，讲解必须逐要点覆盖，讲解长度按要点数量自适应
 - 默认先生成基础教学，再通过结构化理解检查确认掌握情况
+- 理解检查与练习评价按要点逐项判定掌握（`point_results`），补讲聚焦未掌握要点
+- 练习题从刚才讲解覆盖的要点衍生，确保题目与教学内容一致
 - 可在首页选择 `diagnose_first`，先生成结构化诊断题再针对讲解
 - 「资料课程」入口上传整本书，按章节生成课程列表、逐章学习和进度徽标
 - 输入可选学习目标，让讲解根据掌握度和最近错误动态调整
 - 上传一张本地图片参与诊断
-- 粘贴纯文本，或上传多份论文、书籍、课件、图片与代码资料
-- 输入一个或多个课程网页 URL，并在讲解阶段显示文件名、页码、章节、幻灯片或代码行范围
+- 上传多份论文、书籍、课件、图片与代码资料，讲解阶段显示文件名、页码、章节、幻灯片或代码行范围
 - 显示本次摄取的新增、更新、跳过和 Chunk 统计
 - 显示 Hybrid RAG 尝试次数、证据质量、查询改写和最终来源相关度
 - 显示 GraphRAG 概念节点、带方向关系、前置路径、补课原因和来源位置
@@ -210,6 +213,7 @@ PYTHONPATH=src python -m learning_coach web --model codex_cli:default
 - 代码提交后的执行审批卡片（批准/拒绝，批准前不启动进程）
 - 时间旅行面板：会话里程碑列表、从等待输入的检查点分叉新会话并显示基线对比
 - 显示学习者长期记忆（会话次数、平均分、上次主题）
+- 「历史问题」页（`/history`）按学习者标识查看提交过的学习主题、学习目标与时间
 - 完成后展示阶段报告：掌握图谱分档、轨迹检查结论、安全发现计数与下一步建议
 
 当前 Web MVP 是本地单进程应用。模型配置接口只接受回环客户端，同源写操作只接受 JSON；API Key 只在进程内存中存在。Web 会话注册表重启后需要重新开始；尚未实现用户账号、远程模型管理和公网部署。
@@ -228,7 +232,8 @@ PYTHONPATH=src python -m learning_coach web --model codex_cli:default
 | `GET /api/learners/{learner_id}/courses` | 列出学习者的课程与章节进度 |
 | `GET /api/courses/{course_id}` | 返回单门课程的章节列表、状态、分数与建议续学章节 |
 | `POST /api/courses/{id}/chapters/{chapter_id}/sessions/stream` | 以 SSE 创建该章的学习会话，讲解与练习限定在本章范围内 |
-| `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话 |
+| `POST /api/sessions` | 使用主题、目标、诊断图片、纯文本、多个 `materials` 文件和换行 `source_urls` 创建会话；创建时按学习者标识记录历史问题 |
+| `GET /api/learners/{learner_id}/questions` | 查询该学习者提交过的历史问题（仅本机访问，最新在前） |
 | `POST /api/sessions/{id}/answers` | 提交回答并恢复 LangGraph 执行 |
 | `POST /api/sessions/stream` | 使用相同多模态资料输入流式创建会话 |
 | `POST /api/sessions/{id}/answers/stream` | 流式恢复图执行，返回 status、token、sources、retrieval、knowledge_graph、code_practice、state 和 done 事件 |
@@ -515,7 +520,7 @@ flowchart LR
 ```
 
 - **Checkpoint / Durable**：默认仍是进程内 `InMemorySaver`；配置 `CHECKPOINT_DB_PATH` 后切换为 SQLite 保存器，CLI 用 `--thread-id` 在新进程里从 pending 中断继续会话（`invoke(None)` 恢复未完成任务）。
-- **Store / 长期记忆**：会话开始 `recall_memory` 读取 `("learner_memory", learner_id)` 命名空间的聚合画像（次数、主题、平均分、上次缺口），注入确定性 `context_summary` 的"长期记忆"行；会话结束 `remember_session` 以 `session:{thread_id}` 为幂等键写入结果并重算画像——崩溃重放覆盖同一键，不会重复累计。默认内存 Store，`MEMORY_DB_PATH` 指向 SQLite 文件后跨重启保留。
+- **Store / 长期记忆**：会话开始 `recall_memory` 读取 `("learner_memory", learner_id)` 命名空间的聚合画像（次数、主题、平均分、上次缺口），注入确定性 `context_summary` 的"长期记忆"行；会话结束 `remember_session` 以 `session:{thread_id}` 为幂等键写入结果并重算画像——崩溃重放覆盖同一键，不会重复累计。默认内存 Store，`MEMORY_DB_PATH` 指向 SQLite 文件后跨重启保留。创建会话时还会把学习主题按学习者标识写入 `question_history` 命名空间（仅主题、目标、模式与时间，不含回答或讲解正文），供 `/history` 历史问题页查询，默认保留最近 50 条。
 - **Interrupt / 审批**：本地运行学习者代码是全系统唯一执行不可信输入的动作。代码提交后先停在 `approve_execution` 审批中断，payload 带入口函数与测试数量；批准后才进入受限执行器，拒绝则构造零执行 `rejected` 报告（不启动任何进程）并继续补救或总结。默认开启，`CODE_EXECUTION_APPROVAL=false` 关闭。
 - **Time Travel**：`GET /api/sessions/{id}/history` 返回脱敏里程碑（节点、标签、分数、可否分叉）；`POST /api/sessions/{id}/fork` 把快照 values 复制到新线程并重新进入该中断点——原会话状态不变，新分支可以换一种回答重走，响应附基线与当前状态的安全差异比较。
 
