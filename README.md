@@ -416,7 +416,7 @@ EMBEDDING_MODEL_ID=openai:text-embedding-3-small
 
 ### GraphRAG 与知识前置图
 
-第 7 阶段在 Hybrid RAG 之上增加教学概念图。系统先从当前会话的 Chunk 中做实体关系抽取，再把显式全称/缩写、Unicode、大小写和代码标识符变体交给别名消歧。当前支持四类带方向关系：`prerequisite_of` 表示“前置概念 → 目标概念”，`defines` 表示定义关系，`part_of` 表示组成关系，`related_to` 表示一般关联；每个节点和关系都保留来源 Chunk ID。
+第 7 阶段在 Hybrid RAG 之上增加教学概念图。系统先从当前会话的 Chunk 中做实体关系抽取，再把显式全称/缩写、Unicode、大小写和代码标识符变体交给别名消歧。当前支持三类带方向关系：`prerequisite_of` 表示“前置概念 → 目标概念”，`part_of` 表示组成关系，`related_to` 表示一般关联；每个节点和关系都保留来源 Chunk ID。
 
 ```mermaid
 flowchart LR
