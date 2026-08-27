@@ -200,6 +200,14 @@ def _run_web_cli(arguments: Sequence[str]) -> None:
     )
 
 
+def _run_desktop_cli(arguments: Sequence[str]) -> None:
+    from learning_coach.desktop import run_desktop
+
+    exit_code = run_desktop(arguments)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "auth":
@@ -210,6 +218,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if arguments and arguments[0] == "web":
         _run_web_cli(arguments[1:])
+        return
+    if arguments and arguments[0] == "desktop":
+        _run_desktop_cli(arguments[1:])
         return
     if arguments and arguments[0] == "evaluate":
         _run_evaluate_cli()

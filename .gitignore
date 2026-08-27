@@ -44,3 +44,7 @@ data/private/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+
+# PyInstaller icon build artifacts
+packaging/icon.icns
+packaging/build-icon.iconset/

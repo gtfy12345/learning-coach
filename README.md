@@ -266,6 +266,36 @@ ASSESSMENT_FALLBACK_MODEL_ID=google_genai:gemini-2.5-flash-lite
 
 备用模型是可选配置。LCEL 会对完整的 `Prompt | Model | Parser` 任务使用一次 `with_fallbacks()`：Provider 调用、CLI 调用或输出验证失败都可以触发备用链；主备均失败时保留主链异常，不会无限重试。图片会原样传给备用模型，不会为了降级而静默删除。
 
+### macOS 桌面应用
+
+Web MVP 可以打包成双击即用的 macOS 桌面应用 `LearningCoach.app`：应用在进程内启动同一套 FastAPI 服务（监听回环随机端口），用系统 WKWebView 原生窗口加载现有页面，关闭窗口即退出。后端、工作流和前端与 `web` 子命令完全一致。
+
+构建（在 macOS 上、项目 venv 已安装依赖）：
+
+```bash
+python -m pip install -r requirements-dev.txt   # 额外引入 PyInstaller
+scripts/build_macos_app.sh                      # 测试 → 图标 → 打包 → ad-hoc 签名
+open dist/LearningCoach.app
+```
+
+桌面应用的数据不依赖仓库目录，统一放在：
+
+```
+~/Library/Application Support/LearningCoach/
+├── .env             # 设置页勾选「同时保存到本机 .env」时写入这里
+├── checkpoints.db   # 默认检查点持久化（显式配置 CHECKPOINT_DB_PATH 时尊重原值）
+├── memory.db        # 默认长期记忆与课程进度（显式配置 MEMORY_DB_PATH 时尊重原值）
+└── app.lock         # 单实例锁；重复启动会提示「已在运行」
+```
+
+行为要点：
+
+- 未显式配置持久化时，桌面模式默认启用上面两个 SQLite 文件，退出应用不丢会话与课程进度；`.env` 中显式写 `memory` 或其他路径仍然优先。
+- 启动时自动把 `/opt/homebrew/bin` 等常见目录补进 PATH，从 Finder（访达）启动也能找到 `codex`/`claude` CLI。
+- 数据目录可用 `LEARNING_COACH_DATA_HOME` 环境变量覆盖。
+- 开发调试可以不打包直接运行：`PYTHONPATH=src python -m learning_coach desktop`；加 `--headless` 只启动本地服务不开窗口（冒烟测试用）。注意 windowed 打包后的 headless 进程不响应 Ctrl+C，自动化冒烟用 SIGTERM 结束。
+- 构建产物为本地 ad-hoc 签名，仅本机使用；分发给其他 Mac 需要另行正式签名与公证。当前仅构建本机架构（Apple Silicon）。
+
 ### Context Engineering 与 Middleware
 
 第 4 阶段把“每次调用给模型什么上下文”变成了显式策略。`LearningRuntimeContext` 保存本次会话不可变的学习目标、目标掌握度和调用预算；LangGraph State 保存会随学习变化的掌握度、最近三个错误和确定性摘要。两者不会互相覆盖：预算由服务端配置决定，模型输出不能把预算写大。
@@ -718,6 +748,12 @@ learning-coach/
 ├── README.md
 ├── requirements.txt
 ├── requirements-dev.txt
+├── packaging/
+│   ├── entry.py
+│   └── LearningCoach.spec
+├── scripts/
+│   ├── build_macos_app.sh
+│   └── make_app_icon.py
 ├── src/
 │   └── learning_coach/
 │       ├── __init__.py
@@ -729,6 +765,7 @@ learning-coach/
 │       ├── code_practice.py
 │       ├── context.py
 │       ├── course.py
+│       ├── desktop.py
 │       ├── graph.py
 │       ├── hybrid_rag.py
 │       ├── ingestion.py
@@ -762,6 +799,7 @@ learning-coach/
     ├── test_context.py
     ├── test_course.py
     ├── test_course_api.py
+    ├── test_desktop.py
     ├── test_evaluation.py
     ├── test_graph.py
     ├── test_hybrid_rag.py
@@ -839,6 +877,7 @@ learning-coach/
 - 网页 Loader 解析静态 HTML，不执行页面 JavaScript；复杂排版、公式和受密码保护文档可能无法完整提取。
 - `InMemorySaver` 只保存当前进程中的状态。
 - Web MVP 目前只面向本机使用，没有用户账号、远程配置权限模型或公网部署；页面 API Key 不持久化。
+- macOS 桌面应用只是 Web MVP 的打包形态：同一单进程、同一回环安全模型；构建产物为单架构 ad-hoc 签名，仅本机使用，桌面数据目录之外的能力边界与上面各条一致。
 - 评分由模型完成，不能直接等同于真实掌握程度。
 - model profile 可能缺失或过期；兼容端点需要通过策略配置显式确认能力。
 - LCEL fallback 只在任务抛出异常时切换一次，不做负载均衡，也不会根据答案质量自动换模型。

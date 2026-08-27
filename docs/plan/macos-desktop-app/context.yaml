@@ -1,0 +1,30 @@
+apiVersion: ferry.agent.context/v1alpha1
+kind: PlanContext
+metadata:
+  name: macos-desktop-app
+spec:
+  defaultTarget: desktop
+  discovery:
+    aliases:
+      - macos-desktop-app
+      - LearningCoach.app
+    keywords:
+      - macOS 桌面应用
+      - 桌面窗口
+      - pywebview
+      - PyInstaller 打包
+      - 单实例锁
+  targets:
+    desktop:
+      plan: ./implementation.md
+      checklist: ./implementation-checklist.md
+      spec: ../../spec/macos-desktop-app-design.md
+      discovery:
+        packages:
+          - src/learning_coach/desktop.py
+          - src/learning_coach/cli.py
+          - packaging/
+          - scripts/build_macos_app.sh
+        commands:
+          - python -m learning_coach desktop --headless
+          - scripts/build_macos_app.sh

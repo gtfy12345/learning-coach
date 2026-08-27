@@ -297,6 +297,12 @@ def test_create_model_suite_reuses_matching_fallback_model_id(monkeypatch) -> No
     monkeypatch.setenv("ASSESSMENT_MODEL_ID", "openai:primary")
     monkeypatch.setenv("CHAT_FALLBACK_MODEL_ID", "anthropic:fallback")
     monkeypatch.delenv("ASSESSMENT_FALLBACK_MODEL_ID", raising=False)
+    # create_model_suite 内部 load_dotenv() 会读到本机 .env 中的 Provider Key，
+    # 使 api_keys 非空；本测试只验证 fallback 复用，需隔离凭据来源。
+    monkeypatch.setattr(
+        "learning_coach.model.provider_env_credentials",
+        lambda environ: ({}, {}),
+    )
     monkeypatch.setattr("learning_coach.model._create_chat_model", fake_create)
 
     suite = create_model_suite()
